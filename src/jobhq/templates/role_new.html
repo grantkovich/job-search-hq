@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<h1>Add a role</h1>
+<form hx-post="/roles" class="card form">
+  <label>Company<input name="company" required></label>
+  <label>Job title<input name="title" required></label>
+  <label>Link to the posting<input name="url" type="url" placeholder="https://…"></label>
+  <label>Posting text <span class="muted small">(paste it here; best for LinkedIn, which needs a login)</span>
+    <textarea name="posting" rows="10"></textarea></label>
+  <label>Location<input name="location"></label>
+  <label>Work mode<select name="work_mode"><option value="">Unknown</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
+  <label>Someone who can refer you <input name="warm_path" placeholder="Name and how you know them"></label>
+  <label>Notes<textarea name="notes" rows="2"></textarea></label>
+  <button class="btn primary">Add role</button>
+  <p class="small muted">With posting text and Claude connected, the role is scored automatically.</p>
+</form>
+{% endblock %}

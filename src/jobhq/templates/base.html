@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf }}">
+<meta name="htmx-config" content='{"selfRequestsOnly":true,"allowScriptTags":false,"allowEval":false,"historyCacheSize":0,"includeIndicatorStyles":false,"refreshOnHistoryMiss":true,"defaultSwapStyle":"none"}'>
+<meta name="theme-color" content="#1f4e79" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#19212a" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Your private job search workspace.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Job Search HQ">
+<meta name="referrer" content="no-referrer">
+<title>{% if title %}{{ title }} · {% endif %}Job Search HQ</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx-2.0.4.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body hx-history="false">
+<a class="skip" href="#main">Skip to content</a>
+{% if signed_in %}
+<header class="top">
+  <a class="brand" href="/">Job Search HQ</a>
+  <nav class="nav" aria-label="Main">
+    {% set links = [("/", "Today"), ("/roles", "Roles"), ("/chat", "Chat"), ("/profile", "Profile"), ("/interview", "Interview"),
+                    ("/documents", "Documents"), ("/outreach", "Outreach"), ("/practice", "Practice"), ("/intake", "Inbox"), ("/reminders", "Reminders")] %}
+    {% for href, label in links %}
+      <a href="{{ href }}" {% if path == href or (href != "/" and path.startswith(href)) %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+    <a href="/suggestions" class="{{ 'badge-link' if pending_suggestions else '' }}" {% if path.startswith('/suggestions') %}aria-current="page"{% endif %}>
+      Suggestions{% if pending_suggestions %} <span class="badge">{{ pending_suggestions }}</span><span class="sr-only"> waiting</span>{% endif %}</a>
+  </nav>
+  <div class="top-end">
+    <a href="/setup" {% if path == '/setup' %}aria-current="page"{% endif %}>Setup</a>
+    <a href="/settings" {% if path == '/settings' %}aria-current="page"{% endif %}>Settings</a>
+    <button class="link" hx-post="/logout">Sign out</button>
+  </div>
+</header>
+{% endif %}
+<main class="main {% block main_class %}{% endblock %}" id="main" tabindex="-1">
+{% block content %}{% endblock %}
+</main>
+<div id="toasts" class="toasts"></div>
+<div id="announce" class="sr-only" role="status"></div>
+<div id="announce-alert" class="sr-only" role="alert"></div>
+</body>
+</html>

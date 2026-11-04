@@ -1,0 +1,630 @@
+#!/usr/bin/env python3
+"""jobsctl: run Job Search HQ on a VM. One copy of the app per person, behind one Caddy.
+
+  sudo jobsctl init                         one-time: domain, Google sign-in client, HTTPS email
+  sudo jobsctl add-user NAME EMAIL          a copy for one person at https://NAME.<domain>
+        [--timezone America/New_York] [--no-voice] [--address full.host.name]
+  sudo jobsctl remove-user NAME [--delete-data]
+  sudo jobsctl list | status
+  sudo jobsctl update                       pull the latest release, rebuild, restart (backs up first)
+  sudo jobsctl backup [NAME|--all]          consistent backup into /srv/jobhq/backups (keeps 14 per person)
+  sudo jobsctl restore NAME FILE            restore a backup (stops that copy while restoring)
+  sudo jobsctl export-server FILE           settings and a fresh backup of everyone, for moving to a new server
+  sudo jobsctl import-server FILE [--domain D]  rebuild everyone on a fresh server from that file
+  sudo jobsctl logs NAME                    follow a copy's logs
+  sudo jobsctl rotate-secret NAME           new encryption secret for a copy; signs everyone out
+  sudo jobsctl claude-login NAME            sign that copy in to Claude Code with the person's own Claude plan
+        [--status] [--logout]               (Claude Code's own sign-in; the app never sees the token)
+  jobsctl secret                            print a new random secret
+
+Layout under /srv/jobhq: repo/ (this code), vm.env, instances/NAME.env, data/NAME/, backups/,
+and the generated compose.yaml and Caddyfile. Secrets files are root-only (0600).
+Only the standard library is used, so this runs on a fresh Debian VM.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import secrets
+import shutil
+import stat
+import subprocess  # noqa: S404
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+ROOT = Path(os.environ.get("JOBHQ_ROOT", "/srv/jobhq"))
+REPO, INSTANCES, DATA, BACKUPS = ROOT / "repo", ROOT / "instances", ROOT / "data", ROOT / "backups"
+VM_ENV, COMPOSE, CADDYFILE = ROOT / "vm.env", ROOT / "compose.yaml", ROOT / "Caddyfile"
+INSTALL_ENV = ROOT / "install.env"
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,20}$")
+EMAIL_RE = re.compile(r"^[^@\s{}#,;\"'`\\]+@[a-z0-9.-]+\.[a-z]{2,63}$", re.IGNORECASE)  # also safe to write into the Caddyfile
+IMAGE_RE = re.compile(r"^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+(:[A-Za-z0-9._-]{1,128}|@sha256:[0-9a-f]{64})$")
+HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+APP_UID = 10001
+KEEP_BACKUPS = 14
+CADDY_IMAGE = "caddy:2.8"
+
+
+def die(message: str) -> None:
+    print(f"jobsctl: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def need_root() -> None:
+    if os.geteuid() != 0:
+        die("run this with sudo")
+
+
+def run(cmd: list[str], check: bool = True, **kw) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, check=check, **kw)  # noqa: S603 - fixed argument lists, never a shell
+
+
+def compose(*args: str, check: bool = True, **kw) -> subprocess.CompletedProcess:
+    return run(["docker", "compose", "-f", str(COMPOSE), "--project-name", "jobhq", *args], check=check, cwd=ROOT, **kw)
+
+
+def read_env(path: Path) -> dict[str, str]:
+    values = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line.strip() and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+    return values
+
+
+def write_env(path: Path, values: dict[str, str]) -> None:
+    for key, value in values.items():
+        if "\n" in value or "\r" in value:
+            die(f"{key} can't contain a line break")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("# Managed by jobsctl. Keep this file private.\n")
+        f.writelines(f"{k}={v}\n" for k, v in values.items())
+    os.replace(tmp, path)
+
+
+def host_of(base_url: str) -> str:
+    """The host name in https://host, or "" if base_url is anything else."""
+    host = base_url.removeprefix("https://") if base_url.startswith("https://") else ""
+    return host if HOST_RE.match(host) else ""
+
+
+def new_secret() -> str:
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+
+
+def instances() -> dict[str, dict[str, str]]:
+    return {p.stem: read_env(p) for p in sorted(INSTANCES.glob("*.env"))}
+
+
+def ask(prompt: str, default: str = "", secret: bool = False, check=None) -> str:
+    import getpass
+    while True:
+        shown = f" [{default}]" if default and not secret else ""
+        value = (getpass.getpass(f"{prompt}: ") if secret else input(f"{prompt}{shown}: ")).strip() or default
+        problem = check(value) if check else None
+        if value and not problem:
+            return value
+        print(problem or "  This is required.")
+
+
+# --------------------------------------------------------------- rendering
+
+def render() -> None:
+    """Write compose.yaml and the Caddyfile from vm.env and instances/*.env."""
+    vm = read_env(VM_ENV)
+    people = instances()
+    services: dict = {
+        "caddy": {
+            "image": CADDY_IMAGE, "restart": "unless-stopped",
+            "ports": ["80:80", "443:443", "443:443/udp"],
+            "volumes": ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"],
+            "cap_drop": ["ALL"], "cap_add": ["NET_BIND_SERVICE"], "security_opt": ["no-new-privileges:true"], "read_only": True,
+            "tmpfs": ["/tmp"], "networks": [f"net_{n}" for n in people] or ["default"],
+            "logging": {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}},
+        },
+    }
+    image = vm.get("JOBHQ_IMAGE", "").strip()
+    if image and not IMAGE_RE.match(image):
+        die("JOBHQ_IMAGE in vm.env must look like ghcr.io/owner/job-search-hq:0.1.0 or ...@sha256:<digest>")
+    small = vm.get("JOBHQ_SIZE", "") == "small"
+    for i, (name, env) in enumerate(people.items()):
+        service = {
+            "image": image or "jobhq:local", "restart": "unless-stopped",
+            "env_file": ["./vm.env", f"./instances/{name}.env"],
+            "environment": {"JOBHQ_INSTANCE": name, "JOBHQ_DATA_DIR": "/data", "TZ": env.get("JOBHQ_TIMEZONE", "America/New_York"),
+                            **({"JOBHQ_AI_PARALLEL": "1", "JOBHQ_WORKERS": "1"} if small else {})},
+            "volumes": [f"./data/{name}:/data"], "read_only": True, "tmpfs": ["/tmp:size=512m"],
+            "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"], "user": f"{APP_UID}:{APP_UID}",
+            "mem_limit": env.get("JOBHQ_MEMORY", "700m" if small else "1536m"), "cpus": float(env.get("JOBHQ_CPUS", "1.0")), "pids_limit": 512,
+            "networks": [f"net_{name}"],
+            "logging": {"driver": "json-file", "options": {"max-size": "10m", "max-file": "5"}},
+        }
+        if i == 0 and not image:
+            service["build"] = {"context": "./repo", "dockerfile": "deploy/Dockerfile",
+                                "args": {"VOICE": "1" if any(e.get("JOBHQ_VOICE", "on") == "on" for e in people.values()) else "0"}}
+        services[f"app-{name}"] = service
+    doc = {"name": "jobhq", "services": services, "volumes": {"caddy_data": {}, "caddy_config": {}},
+           "networks": {f"net_{n}": {"driver": "bridge"} for n in people} or {"default": {}}}
+    tmp = COMPOSE.with_suffix(".tmp")
+    tmp.write_text("# Generated by jobsctl. Edit instances/*.env and run `jobsctl update` instead.\n" + json.dumps(doc, indent=2) + "\n")
+    os.replace(tmp, COMPOSE)  # JSON is valid YAML, so Compose reads it as is
+
+    # These values land in the Caddyfile and may come from an imported file, so each is checked:
+    # one stray space, comma or brace could add a site or a directive.
+    acme = vm.get("ACME_EMAIL", "")
+    if acme and not EMAIL_RE.match(acme):
+        die("ACME_EMAIL in vm.env isn't an email address")
+    lines = ["# Generated by jobsctl.", "{", *([f"\temail {acme}"] if acme else []), "\tservers {", "\t\tprotocols h1 h2 h3", "\t}", "}", "",
+             "(common) {", "\tencode zstd gzip", "\trequest_body {", "\t\tmax_size 30MB", "\t}", "\theader -Server", "}", ""]
+    for name, env in people.items():
+        host = host_of(env.get("JOBHQ_BASE_URL", ""))
+        if not NAME_RE.match(name) or not host:
+            die(f"instances/{name}.env: the name or JOBHQ_BASE_URL is odd; it must look like https://{name}.jobs.example.com")
+        lines += [f"{host} {{", "\timport common", f"\treverse_proxy app-{name}:8000", "}", ""]
+    if not people:
+        lines += [":80 {", "\trespond \"Job Search HQ is installed. Add a person with: sudo jobsctl add-user NAME EMAIL\" 200", "}"]
+    CADDYFILE.write_text("\n".join(lines) + "\n")
+
+
+def with_version(image: str, version: str) -> str:
+    """ghcr.io/o/app:0.1.0 or ghcr.io/o/app@sha256:... -> ghcr.io/o/app:<version>"""
+    repo = image.split("@", 1)[0]
+    head, _, last = repo.rpartition("/")
+    return f"{head}/{last.split(':', 1)[0]}:{version}"
+
+
+def apply() -> None:
+    render()
+    if read_env(VM_ENV).get("JOBHQ_IMAGE"):
+        compose("pull", "--quiet")
+        compose("up", "-d", "--remove-orphans")
+    else:
+        compose("up", "-d", "--build", "--remove-orphans")
+
+
+# ----------------------------------------------------------------- commands
+
+def cmd_init(_args) -> None:
+    need_root()
+    installed = read_env(INSTALL_ENV)  # what install.sh knew: the free sslip.io address, server size, prebuilt image
+    vm = {**{k: v for k, v in installed.items() if k in ("JOBHQ_SIZE", "JOBHQ_IMAGE") and v}, **read_env(VM_ENV)}
+    print("Job Search HQ setup. See docs/install.md, step 4, for where each value comes from.\n")
+    suggested = vm.get("JOBHQ_DOMAIN") or installed.get("JOBHQ_SUGGESTED_DOMAIN", "")
+    if suggested.endswith(".sslip.io") and not vm.get("JOBHQ_DOMAIN"):
+        print(f"No domain needed: press Enter to use the free address {suggested} (each person gets NAME.{suggested}).")
+    domain = ask("Base domain for the copies (each person gets NAME.<this>), e.g. jobs.example.com", suggested,
+                 check=lambda v: None if HOST_RE.match(v.lower()) else "  Use a domain like jobs.example.com")
+    acme = input(f"Email for HTTPS certificate notices from Let's Encrypt (optional, Enter to skip) [{vm.get('ACME_EMAIL', '')}]: ").strip() \
+        or vm.get("ACME_EMAIL", "")
+    if acme and not EMAIL_RE.match(acme):
+        die("that isn't an email address")
+    client_id = ask("Google OAuth client ID", vm.get("JOBHQ_GOOGLE_CLIENT_ID", ""),
+                    check=lambda v: None if v.endswith(".apps.googleusercontent.com") else "  It ends with .apps.googleusercontent.com")
+    client_secret = ask("Google OAuth client secret (hidden)", secret=True)
+    vm.update({"JOBHQ_DOMAIN": domain.lower(), "ACME_EMAIL": acme, "JOBHQ_GOOGLE_CLIENT_ID": client_id,
+               "JOBHQ_GOOGLE_CLIENT_SECRET": client_secret})
+    write_env(VM_ENV, vm)
+    for d in (INSTANCES, DATA, BACKUPS):
+        d.mkdir(parents=True, exist_ok=True)
+        d.chmod(0o700)
+    apply()
+    print("\nSaved. Next: sudo jobsctl add-user NAME EMAIL")
+
+
+def voice_setting(vm: dict, args) -> str:
+    """Voice practice is on by default, except on the small free server, where its speech model doesn't fit well."""
+    if getattr(args, "no_voice", False):
+        return "off"
+    if getattr(args, "voice", False):
+        return "on"
+    return "off" if vm.get("JOBHQ_SIZE") == "small" else "on"
+
+
+def cmd_add_user(args) -> None:
+    need_root()
+    vm = read_env(VM_ENV)
+    if not vm:
+        die("run `sudo jobsctl init` first")
+    name, email = args.name.lower(), args.email.lower()
+    if not NAME_RE.match(name):
+        die("NAME must be 2-21 lowercase letters, numbers or dashes, starting with a letter (it becomes part of the address)")
+    if not EMAIL_RE.match(email):
+        die("EMAIL must be the person's Google account email")
+    path = INSTANCES / f"{name}.env"
+    if path.exists():
+        die(f"{name} already exists")
+    host = (args.address or f"{name}.{vm['JOBHQ_DOMAIN']}").lower()
+    if not HOST_RE.match(host):
+        die("that address isn't a valid host name")
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(args.timezone)
+    except Exception:
+        die(f"unknown time zone {args.timezone}, for example America/Chicago")
+    write_env(path, {"JOBHQ_OWNER_EMAIL": email, "JOBHQ_BASE_URL": f"https://{host}", "JOBHQ_SECRET": new_secret(),
+                     "JOBHQ_TIMEZONE": args.timezone, "JOBHQ_VOICE": voice_setting(vm, args)})
+    data = DATA / name
+    data.mkdir(parents=True, exist_ok=True)
+    os.chown(data, APP_UID, APP_UID)
+    data.chmod(0o700)
+    apply()
+    print(added_message(name, host, email))
+
+
+def added_message(name: str, host: str, email: str) -> str:
+    """What to do after add-user. A free sslip.io address needs no DNS; your own domain does."""
+    steps = []
+    if not host.endswith(".sslip.io"):
+        steps.append(f"DNS: point {host} at this VM's IP address (an A record), unless a wildcard record already covers it.")
+    steps.append(f"""Their address: in the Google Cloud console, open Google Auth Platform -> Clients -> Job Search HQ.
+     Under "Authorized redirect URIs", choose "Add URI", paste this, and choose "Save":
+       https://{host}/auth/callback""")
+    steps.append(f"""Their Google account: open Google Auth Platform -> Audience. Under "Test users", choose "Add users",
+     paste {email} and choose "Save". (Skip this if "Publishing status" says "In production".)""")
+    numbered = "\n".join(f"  {i}. {s}" for i, s in enumerate(steps, 1))
+    return f"""
+Added {name}: https://{host}  (only {email} can sign in)
+
+Before {email} signs in:
+{numbered}
+Then open https://{host} and sign in."""
+
+
+def cmd_remove_user(args) -> None:
+    need_root()
+    path = INSTANCES / f"{args.name}.env"
+    if not path.exists():
+        die(f"no copy called {args.name}")
+    cmd_backup(argparse.Namespace(name=args.name, all=False, quiet=False))
+    compose("rm", "-sf", f"app-{args.name}", check=False)
+    path.unlink()
+    if args.delete_data:
+        shutil.rmtree(DATA / args.name, ignore_errors=True)
+        print(f"Deleted {args.name}'s data. Its last backup is still in {BACKUPS}.")
+    apply()
+
+
+def cmd_list(_args) -> None:
+    for name, env in instances().items():
+        print(f"{name:20} {env.get('JOBHQ_BASE_URL', ''):45} {env.get('JOBHQ_OWNER_EMAIL', '')}")
+
+
+def cmd_status(_args) -> None:
+    compose("ps")
+    for name in instances():
+        compose("exec", "-T", f"app-{name}", "python", "-m", "jobhq.cli", "check", check=False)
+
+
+def cmd_update(args) -> None:
+    need_root()
+    cmd_backup(argparse.Namespace(name=None, all=True, quiet=True))
+    branch = args.ref or "main"
+    vm = read_env(VM_ENV)
+    if getattr(args, "version", None):
+        if not vm.get("JOBHQ_IMAGE"):
+            die("--version needs a prebuilt image: set JOBHQ_IMAGE in vm.env (see docs/operations.md)")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+(\.[0-9]+)?", args.version):
+            die("--version looks like 0.2.0")
+        vm["JOBHQ_IMAGE"] = with_version(vm["JOBHQ_IMAGE"], args.version)
+        write_env(VM_ENV, vm)
+    if (REPO / ".git").exists():
+        run(["git", "-C", str(REPO), "fetch", "--tags", "origin"])
+        run(["git", "-C", str(REPO), "checkout", "-q", branch])
+        run(["git", "-C", str(REPO), "pull", "-q", "--ff-only"], check=False)
+    else:
+        print("This server was installed from uploaded files, not git; rebuilding what's there. "
+              "To load new code, run install.sh again with 'local'.")
+    compose("pull", "caddy", check=False)
+    apply()
+    run(["docker", "image", "prune", "-f"], check=False, stdout=subprocess.DEVNULL)
+    print("Updated. Database changes apply automatically when each copy starts.")
+
+
+KEYS_WARNING = ("Backups and export files hold each copy's encryption key (JOBHQ_SECRET) next to its database, and an export "
+                "also holds the Google client secret. Anyone with the file can read everything in it, including Gmail access. "
+                "Guard it like a password: keep it root-only, move it only over SSH/IAP, and delete copies you don't need.")
+
+
+def _add_tree_nofollow(tar: tarfile.TarFile, parent_fd: int, name: str, arcname: str) -> None:
+    """Add the folder `name` (inside parent_fd) to tar without following any link. The container owns this folder,
+    so it could swap in symlinks to root-only files; only plain files and folders are taken, each opened with
+    O_NOFOLLOW relative to its parent's descriptor, so a swap mid-walk can't redirect the read."""
+    for dirpath, _dirs, files, dir_fd in os.fwalk(name, dir_fd=parent_fd, follow_symlinks=False):
+        rel = os.path.relpath(dirpath, name)
+        here = arcname if rel == "." else f"{arcname}/{rel}"
+        info = tarfile.TarInfo(here)
+        info.type, info.mode, info.mtime = tarfile.DIRTYPE, 0o700, int(time.time())
+        tar.addfile(info)
+        for fname in files:
+            try:
+                fd = os.open(fname, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=dir_fd)
+            except OSError:
+                continue  # a link or something unreadable: skip it
+            with os.fdopen(fd, "rb") as f:
+                st = os.fstat(f.fileno())
+                if not stat.S_ISREG(st.st_mode):
+                    continue  # fifos, devices, sockets
+                info = tarfile.TarInfo(f"{here}/{fname}")
+                info.size, info.mode, info.mtime = st.st_size, 0o600, int(st.st_mtime)
+                tar.addfile(info, f)
+
+
+def cmd_backup(args) -> None:
+    need_root()
+    old_umask = os.umask(0o077)  # every file and folder this makes is root-only
+    try:
+        _backup(args)
+    finally:
+        os.umask(old_umask)
+
+
+def _backup(args) -> None:
+    names = list(instances()) if args.all or not args.name else [args.name]
+    BACKUPS.mkdir(parents=True, exist_ok=True, mode=0o700)
+    BACKUPS.chmod(0o700)
+    for name in names:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        result = compose("exec", "-T", f"app-{name}", "python", "-m", "jobhq.cli", "backup", "/data/backups-tmp", check=False,
+                         capture_output=True, text=True)
+        source = DATA / name / "backups-tmp"
+        try:  # the container controls this folder: never follow a link it put there
+            src_fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
+            src_fd = None
+        made = sorted(n for n in os.listdir(src_fd) if stat.S_ISDIR(os.stat(n, dir_fd=src_fd, follow_symlinks=False).st_mode)) \
+            if src_fd is not None else []
+        if result.returncode != 0 or not made:
+            print(f"jobsctl: backup of {name} failed (is it running?): {result.stderr.strip()[:300]}", file=sys.stderr)
+            if src_fd is not None:
+                os.close(src_fd)
+            if source.is_symlink():
+                source.unlink()
+            continue
+        target = BACKUPS / f"{name}-{stamp}.tar.gz"
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as raw, tarfile.open(fileobj=raw, mode="w:gz") as tar:
+                _add_tree_nofollow(tar, src_fd, made[-1], "backup")
+                tar.add(INSTANCES / f"{name}.env", arcname="instance.env")  # root's own file, not the container's
+        finally:
+            os.close(src_fd)
+        shutil.rmtree(source, ignore_errors=True)  # rmtree removes links, never what they point at
+        kept = sorted(BACKUPS.glob(f"{name}-*.tar.gz"))
+        for old in kept[:-KEEP_BACKUPS]:
+            old.unlink()
+        if not getattr(args, "quiet", False):
+            print(f"{name}: {target}")
+
+
+def safe_extract(archive: Path, dest: Path) -> None:
+    """Unpack a backup with only plain files and folders inside dest: no links, devices, absolute paths or `..`.
+    Written out by hand because Debian 12's Python (3.11.2) predates tarfile's extraction filters."""
+    dest = dest.resolve()
+    with tarfile.open(archive) as tar:
+        for member in tar.getmembers():
+            target = (dest / member.name).resolve()
+            if member.name.startswith(("/", "\\")) or ".." in Path(member.name).parts or not str(target).startswith(str(dest) + os.sep):
+                die(f"refusing a strange path in the backup: {member.name}")
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True, mode=0o700)
+            elif member.isfile():
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                source = tar.extractfile(member)
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as out:
+                    shutil.copyfileobj(source, out)
+            else:
+                die(f"refusing a link or special file in the backup: {member.name}")
+
+
+def cmd_restore(args) -> None:
+    need_root()
+    name, file = args.name, Path(args.file)
+    if not (INSTANCES / f"{name}.env").exists() or not file.is_file():
+        die("unknown copy or missing backup file")
+    staging = ROOT / f"restore-{name}-{int(time.time())}"
+    safe_extract(file, staging)
+    if not (staging / "backup" / "app.db").is_file():
+        shutil.rmtree(staging)
+        die("that file isn't a Job Search HQ backup")
+    compose("stop", f"app-{name}")
+    data = DATA / name
+    keep = ROOT / f"replaced-{name}-{int(time.time())}"
+    keep.mkdir(mode=0o700)
+    # Swap the folder's contents, not the folder: the container's mount keeps pointing at this same folder.
+    for child in list(data.iterdir()):
+        shutil.move(str(child), keep / child.name)
+    shutil.copy2(staging / "backup" / "app.db", data / "app.db")
+    if (staging / "backup" / "files").is_dir():
+        shutil.copytree(staging / "backup" / "files", data / "files")
+    for path in [data, *data.rglob("*")]:
+        os.chown(path, APP_UID, APP_UID)
+    shutil.rmtree(staging)
+    compose("start", f"app-{name}")
+    print(f"Restored {name}. The data it replaced is in {keep} (delete it when you're sure). The secret in instances/{name}.env "
+          "must match the one the backup was made with; the backup's copy is inside the archive as instance.env.")
+
+
+def cmd_export_server(args) -> None:
+    """Everything needed to rebuild this server elsewhere: settings, each person's settings, and a fresh backup of each."""
+    need_root()
+    people = instances()
+    if not people:
+        die("nobody is set up on this server")
+    print(f"Warning: {KEYS_WARNING}", file=sys.stderr)
+    cmd_backup(argparse.Namespace(name=None, all=True, quiet=True))
+    target = Path(args.file)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    os.fchmod(fd, 0o600)  # also when the file was already there with looser permissions
+    with os.fdopen(fd, "wb") as raw, tarfile.open(fileobj=raw, mode="w:gz") as tar:
+        tar.add(VM_ENV, arcname="vm.env")
+        for name in people:
+            tar.add(INSTANCES / f"{name}.env", arcname=f"instances/{name}.env")
+            latest = sorted(BACKUPS.glob(f"{name}-*.tar.gz"))
+            if not latest:
+                die(f"no backup of {name} was made; is it running?")
+            tar.add(latest[-1], arcname=f"backups/{name}.tar.gz")
+    print(f"Exported {len(people)} {'person' if len(people) == 1 else 'people'} to {target} (root-only, mode 0600).\n"
+          f"It holds the keys to everyone's data: guard it like a password, and delete it once the move is done.")
+
+
+def cmd_import_server(args) -> None:
+    """Rebuild a server from export-server's file: settings, then each person's copy, then their data."""
+    need_root()
+    if instances():
+        die("this server already has people on it; import-server is for a fresh server")
+    staging = ROOT / f"import-{int(time.time())}"
+    safe_extract(Path(args.file), staging)
+    if not (staging / "vm.env").is_file():
+        shutil.rmtree(staging)
+        die("that file isn't from jobsctl export-server")
+    vm = read_env(staging / "vm.env")
+    here = read_env(INSTALL_ENV)
+    for key in ("JOBHQ_SIZE", "JOBHQ_IMAGE"):  # this server's own size and image win over the old server's
+        if key in here:
+            vm[key] = here[key]
+    old_domain = vm.get("JOBHQ_DOMAIN", "")
+    new_domain = (args.domain or old_domain).lower()
+    if not HOST_RE.match(new_domain):
+        die("--domain isn't a valid host name")
+    vm["JOBHQ_DOMAIN"] = new_domain
+    if vm.get("ACME_EMAIL") and not EMAIL_RE.match(vm["ACME_EMAIL"]):
+        die("ACME_EMAIL in that file isn't an email address")
+    for d in (INSTANCES, DATA, BACKUPS):
+        d.mkdir(parents=True, exist_ok=True)
+        d.chmod(0o700)
+    write_env(VM_ENV, vm)
+    moved = []
+    for env_file in sorted((staging / "instances").glob("*.env")):
+        name = env_file.stem
+        if not NAME_RE.match(name):
+            continue
+        env = read_env(env_file)
+        if old_domain and new_domain != old_domain and env.get("JOBHQ_BASE_URL", "").endswith("." + old_domain):
+            env["JOBHQ_BASE_URL"] = env["JOBHQ_BASE_URL"][: -len(old_domain)] + new_domain
+            moved.append(env["JOBHQ_BASE_URL"])
+        if vm.get("JOBHQ_SIZE") == "small" and not getattr(args, "keep_voice", False):
+            env["JOBHQ_VOICE"] = "off"
+        if not host_of(env.get("JOBHQ_BASE_URL", "")) or not EMAIL_RE.match(env.get("JOBHQ_OWNER_EMAIL", "")):
+            die(f"{name}'s settings in that file look wrong (JOBHQ_BASE_URL must be https://host, JOBHQ_OWNER_EMAIL an email)")
+        write_env(INSTANCES / f"{name}.env", env)
+        data = DATA / name
+        data.mkdir(parents=True, exist_ok=True)
+        os.chown(data, APP_UID, APP_UID)
+        data.chmod(0o700)
+        shutil.copy2(staging / "backups" / f"{name}.tar.gz", BACKUPS / f"{name}-imported.tar.gz")
+    apply()
+    for env_file in sorted((staging / "instances").glob("*.env")):
+        name = env_file.stem
+        if NAME_RE.match(name):
+            cmd_restore(argparse.Namespace(name=name, file=str(BACKUPS / f"{name}-imported.tar.gz")))
+    shutil.rmtree(staging)
+    print("\nImported. Check with: sudo jobsctl status")
+    if moved:
+        print("The addresses changed. Add these redirect URIs to your Google OAuth client (Google Auth Platform -> Clients):")
+        for url in moved:
+            print(f"  {url}/auth/callback")
+
+
+def cmd_logs(args) -> None:
+    compose("logs", "-f", "--tail", "200", f"app-{args.name}", check=False)
+
+
+def cmd_rotate(args) -> None:
+    need_root()
+    path = INSTANCES / f"{args.name}.env"
+    env = read_env(path)
+    if not env:
+        die(f"no copy called {args.name}")
+    cmd_backup(argparse.Namespace(name=args.name, all=False, quiet=True))
+    env["JOBHQ_SECRET_OLD"], env["JOBHQ_SECRET"] = env["JOBHQ_SECRET"], new_secret()
+    write_env(path, env)
+    compose("up", "-d", f"app-{args.name}")
+    time.sleep(5)
+    compose("exec", "-T", f"app-{args.name}", "python", "-m", "jobhq.cli", "rotate-secret")
+    env.pop("JOBHQ_SECRET_OLD")
+    write_env(path, env)
+    compose("up", "-d", f"app-{args.name}")
+
+
+def cmd_claude_login(args) -> None:
+    need_root()
+    if not (INSTANCES / f"{args.name}.env").exists():
+        die(f"no copy called {args.name}")
+    action = "claude-status" if args.status else "claude-logout" if args.logout else "claude-login"
+    interactive = [] if sys.stdin.isatty() else ["-T"]
+    result = compose("exec", *interactive, f"app-{args.name}", "python", "-m", "jobhq.cli", action, check=False)
+    sys.exit(result.returncode)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="jobsctl", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("init").set_defaults(fn=cmd_init)
+    p = sub.add_parser("add-user")
+    p.add_argument("name")
+    p.add_argument("email")
+    p.add_argument("--timezone", default="America/New_York")
+    p.add_argument("--no-voice", action="store_true")
+    p.add_argument("--voice", action="store_true", help="turn voice practice on even on the small free server")
+    p.add_argument("--address", help="full host name, if not NAME.<domain>")
+    p.set_defaults(fn=cmd_add_user)
+    p = sub.add_parser("remove-user")
+    p.add_argument("name")
+    p.add_argument("--delete-data", action="store_true")
+    p.set_defaults(fn=cmd_remove_user)
+    sub.add_parser("list").set_defaults(fn=cmd_list)
+    sub.add_parser("status").set_defaults(fn=cmd_status)
+    p = sub.add_parser("update")
+    p.add_argument("--ref", help="branch or tag to run (default main)")
+    p.add_argument("--version", help="prebuilt image version to run, like 0.2.0 (when using a prebuilt image)")
+    p.set_defaults(fn=cmd_update)
+    p = sub.add_parser("backup")
+    p.add_argument("name", nargs="?")
+    p.add_argument("--all", action="store_true")
+    p.add_argument("--quiet", action="store_true")
+    p.set_defaults(fn=cmd_backup)
+    p = sub.add_parser("restore")
+    p.add_argument("name")
+    p.add_argument("file")
+    p.set_defaults(fn=cmd_restore)
+    p = sub.add_parser("export-server")
+    p.add_argument("file")
+    p.set_defaults(fn=cmd_export_server)
+    p = sub.add_parser("import-server")
+    p.add_argument("file")
+    p.add_argument("--domain", help="new base domain, when the server's address changed")
+    p.add_argument("--keep-voice", action="store_true")
+    p.set_defaults(fn=cmd_import_server)
+    p = sub.add_parser("logs")
+    p.add_argument("name")
+    p.set_defaults(fn=cmd_logs)
+    p = sub.add_parser("rotate-secret")
+    p.add_argument("name")
+    p.set_defaults(fn=cmd_rotate)
+    p = sub.add_parser("claude-login")
+    p.add_argument("name")
+    p.add_argument("--status", action="store_true")
+    p.add_argument("--logout", action="store_true")
+    p.set_defaults(fn=cmd_claude_login)
+    sub.add_parser("secret").set_defaults(fn=lambda _a: print(new_secret()))
+    args = parser.parse_args()
+    try:
+        args.fn(args)
+    except subprocess.CalledProcessError as exc:
+        die(f"command failed: {' '.join(map(str, exc.cmd))}")
+    except KeyboardInterrupt:
+        die("cancelled")
+
+
+if __name__ == "__main__":
+    main()

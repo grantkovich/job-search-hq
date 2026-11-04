@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row between"><h1>Inbox</h1>
+  {% if gmail %}<div class="row"><button class="btn" hx-post="/intake/check" hx-target="#check" hx-swap="innerHTML">Check Gmail now</button><span id="check" class="small" role="status"></span></div>{% endif %}</div>
+{% if not gmail %}<p class="alert">Gmail isn't connected. <a href="/setup#gmail">Connect it</a> to pick up job alerts and employer emails automatically.</p>
+{% else %}<p class="muted small">Checked every hour from 7 AM to 9 PM.{% if last %} Last check {{ last|when }}.{% endif %} Read only: nothing is ever sent, labeled or deleted.</p>{% endif %}
+
+<section class="card">
+  <h2>What came in</h2>
+  <div class="table-wrap"><table class="table small cards">
+    <thead><tr><th>Received</th><th>Email</th><th>What happened</th><th><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>{% for i in items %}
+      <tr id="i{{ i.id }}" class="{{ i.status }}"><td data-label="Received">{{ i.received|when }}</td><td data-label="Email">{{ i.subject[:80] }}<br><span class="muted">{{ i.sender[:60] }}</span></td>
+        <td data-label="What happened">{% if i.status == 'review' %}<strong>Review:</strong> {% endif %}{{ i.outcome }}{% if i.role_id %} <a href="/roles/{{ i.role_id }}">role</a>{% endif %}
+          {% if i.status == 'undone' %}<span class="muted">(undone)</span>{% endif %}</td>
+        <td class="no-label">{% if i.status == 'applied' and i.audit_id %}<button class="link" hx-post="/intake/{{ i.id }}/undo">Undo<span class="sr-only">: {{ i.outcome }}</span></button>{% endif %}
+          {% if i.status == 'review' %}<button class="link" hx-post="/intake/{{ i.id }}/dismiss" hx-target="#i{{ i.id }}" hx-swap="delete">Dismiss<span class="sr-only">: {{ i.subject[:80] }}</span></button>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">Nothing yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card" id="watch">
+  <h2>Companies to watch</h2>
+  <p class="small">Paste a company's careers link from Greenhouse (boards.greenhouse.io/…), Lever (jobs.lever.co/…) or Ashby (jobs.ashbyhq.com/…). New roles whose titles match your keywords are added and scored each morning.</p>
+  <ul class="list">{% for w in watch %}<li><strong>{{ w.name }}</strong> <span class="pill">{{ w.board }}/{{ w.slug }}</span>
+    {% if w.keywords %}<span class="small">titles with: {{ w.keywords }}</span>{% endif %}
+    <button class="link small" hx-post="/intake/watch/{{ w.id }}/delete">remove<span class="sr-only"> {{ w.name }}</span></button></li>{% endfor %}</ul>
+  <form hx-post="/intake/watch" class="form grid three">
+    <label>Company name<input name="name" required></label>
+    <label>Careers link<input name="slug" placeholder="https://jobs.lever.co/acme" required></label>
+    <label>Title keywords (comma separated)<input name="keywords" placeholder="e.g. nurse, analyst, sales"></label>
+    <div><button class="btn">Watch</button></div>
+  </form>
+</section>
+{% endblock %}

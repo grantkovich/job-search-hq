@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+
+<section class="card" id="claude">
+  <h2>Claude</h2>
+  <form hx-post="/settings/claude" class="form">
+    <fieldset class="choices">
+      <legend>How this copy reaches Claude</legend>
+      <label><input type="radio" name="mode" value="claude_login" {{ 'checked' if mode == 'claude_login' }}> My own Claude plan (Pro or Max)</label>
+      <label><input type="radio" name="mode" value="api_key" {{ 'checked' if mode == 'api_key' }}> An Anthropic API key (pay per use)</label>
+    </fieldset>
+    <div class="card inset">
+      <h3>Your Claude plan {% if claude_code.signed_in %}<span class="good small">signed in</span>{% else %}<span class="muted small">not signed in</span>{% endif %}</h3>
+      <p class="small">Your plan is signed in once on the server, through Claude's own sign-in screen; whoever runs your server does this with you. Job Search HQ never sees your Claude password or token. Once it says signed in, choose "My own Claude plan" above and Save. Plans are personal: only use your own.</p>
+      <details class="admin"><summary>For whoever runs your server</summary>
+        <p class="small">In Cloud Shell, connect to the server and run:</p>
+        <p><code class="copy">sudo jobsctl claude-login {{ instance }}</code></p>
+        <p class="small muted">Claude Code shows a link: the job seeker opens it, signs in to their own Claude account, and pastes the code back.</p>
+      </details>
+      {% if claude_code.signed_in %}<button class="btn small" type="button" hx-post="/settings/claude/logout" hx-confirm="Sign your Claude plan out on this copy?">Sign my Claude plan out</button>{% endif %}
+      {% if claude_code.error %}<p class="bad small">{{ claude_code.error }}</p>{% endif %}
+    </div>
+    <label>API key {% if has_key %}<span class="good small">saved</span>{% endif %}
+      <input type="password" name="api_key" autocomplete="off" placeholder="{{ 'Saved. Paste a new one to replace it.' if has_key else 'sk-ant-…' }}"></label>
+    <label>Model
+      <select name="model">{% for id, label in models.items() %}<option value="{{ id }}" {{ 'selected' if id == model }}>{{ label }}</option>{% endfor %}</select></label>
+    <label>Monthly AI budget for API key use (US dollars)
+      <input type="number" name="budget" min="1" max="1000" step="1" value="{{ budget|int }}"></label>
+    <p class="small muted">Spent this month: ${{ '%.2f'|format(spent) }}. With an API key, AI features pause when the budget is used up. With a Claude plan, your plan's own usage limits apply instead.</p>
+    <label>Paper size
+      <select name="paper"><option value="us-letter" {{ 'selected' if paper == 'us-letter' }}>US Letter</option><option value="a4" {{ 'selected' if paper == 'a4' }}>A4</option></select></label>
+    <div class="row">
+      <button class="btn primary">Save</button>
+      <button class="btn" type="button" hx-post="/settings/claude/test" hx-target="#test-result" hx-swap="innerHTML">Test Claude</button>
+      <span id="test-result" class="small" role="status"></span>
+    </div>
+  </form>
+  {% if has_key %}
+  <button class="btn danger small" hx-post="/settings/claude/forget" hx-confirm="Delete the saved API key from this copy?">Forget saved API key</button>
+  {% endif %}
+</section>
+
+<section class="card" id="devices">
+  <h2>Signed-in devices</h2>
+  <ul class="list">{% for s in sessions %}
+    <li>{{ s.user_agent[:80] or 'Unknown browser' }} <span class="muted small">last used {{ s.last_seen|when }}{% if s.id_hash == current %} · this device{% endif %}</span></li>{% endfor %}</ul>
+  <button class="btn danger" hx-post="/settings/sessions/end-all" hx-confirm="Sign out on every device, including this one?">Sign out everywhere</button>
+</section>
+
+<section class="card">
+  <h2>Your data</h2>
+  <p>Download everything you've entered in one zip: spreadsheets (CSV) of your records, your profile, and every resume and letter as a PDF. Saved keys and tokens are never included.</p>
+  <a class="btn" href="/export">Download my data</a>
+</section>
+
+<section class="card">
+  <h2>Recent AI use</h2>
+  <div class="table-wrap"><table class="table small cards"><thead><tr><th>When</th><th>Task</th><th>Model</th><th>Cost</th><th>Result</th></tr></thead><tbody>
+  {% for r in runs %}<tr><td data-label="When">{{ r.at|when }}</td><td data-label="Task">{{ r.task }}</td><td data-label="Model">{{ r.model }}</td><td data-label="Cost">${{ '%.4f'|format(r.cost_usd) }}</td>
+    <td data-label="Result">{{ 'ok' if r.ok else r.error }}</td></tr>{% else %}<tr><td colspan="5" class="muted">None yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

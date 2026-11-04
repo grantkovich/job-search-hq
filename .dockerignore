@@ -1,0 +1,14 @@
+.git
+.github
+**/__pycache__
+**/*.pyc
+.venv
+venv
+tests
+docs
+scripts
+deploy/*.example
+*.db
+data
+instances
+backups

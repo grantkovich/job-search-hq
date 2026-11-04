@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="small"><a href="/roles">← Roles</a></p>
+<div class="row between">
+  <div>
+    <h1>{{ r.title }}</h1>
+    <p class="lead">{{ r.company }}{% if r.location %} · {{ r.location }}{% endif %}{% if r.work_mode and r.work_mode not in r.location.lower() %} · {{ r.work_mode }}{% endif %}
+      {% if r.pay_min or r.pay_max %} · {{ r.pay_min|pay_range(r.pay_max, r.pay_currency) }}{% endif %}</p>
+    <p><span class="pill {{ r.status }}">{{ r.status }}</span>
+      {% if r.lane not in ('pipeline', 'closed') %}<span class="pill">{{ r.lane }}: {{ r.lane_why }}</span>{% endif %}
+      {% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">Open posting ↗</a>{% endif %}</p>
+  </div>
+  {% if r.fit_score is not none %}<div class="score grade g{{ r.grade }}"><span class="sr-only">Fit score</span><strong>{{ r.fit_score }}</strong><span><span class="sr-only">grade</span> {{ r.grade }}</span></div>{% endif %}
+</div>
+
+<section class="card" id="status">
+  <h2 id="status-h">Status</h2>
+  <div class="row wrap" role="group" aria-labelledby="status-h">
+    {% for s in ["saved", "applied", "interviewing", "offer", "accepted", "rejected", "withdrawn", "skipped"] %}
+      <button class="btn small {{ 'primary' if r.status == s }}" hx-post="/roles/{{ r.id }}" hx-vals='{"status": "{{ s }}"}' aria-pressed="{{ 'true' if r.status == s else 'false' }}">{{ s.title() }}</button>
+    {% endfor %}
+  </div>
+  <form hx-post="/roles/{{ r.id }}" class="form grid three">
+    <label>Next step<input name="next_step" value="{{ r.next_step }}"></label>
+    <label>By<input type="date" name="next_step_date" value="{{ r.next_step_date }}"></label>
+    <label>Applied on<input type="date" name="applied_on" value="{{ r.applied_on }}"></label>
+    <label class="span2">Referral or warm path<input name="warm_path" value="{{ r.warm_path }}"></label>
+    <div><button class="btn">Save</button></div>
+  </form>
+</section>
+
+{% if r.fit_d %}
+<section class="card" id="fit">
+  <h2>Fit</h2>
+  <p>{{ r.fit_d.why }}</p>
+  <div class="bars">{% for k in ["skills", "experience", "level", "culture"] %}
+    <div class="bar"><span id="fit-{{ k }}">{{ k.title() }}</span><meter min="0" max="25" low="12" high="19" optimum="25" value="{{ r.fit_d[k] }}" aria-labelledby="fit-{{ k }}"></meter><span>{{ r.fit_d[k] }}/25</span></div>{% endfor %}</div>
+  <ul class="gates">{% for g, v in r.gates_d.items() %}<li class="{{ v.result }}"><strong>{{ g.title() }}</strong>: {{ v.result }} — {{ v.why }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="card" id="actions">
+  <h2>Do something</h2>
+  <div class="row wrap">
+    <button class="btn" hx-post="/roles/{{ r.id }}/score" hx-target="#work" hx-swap="innerHTML">{{ 'Re-score' if r.fit_score is not none else 'Score fit' }}</button>
+    <button class="btn" hx-post="/roles/{{ r.id }}/documents/resume" hx-target="#work" hx-swap="innerHTML">Tailor resume</button>
+    <button class="btn" hx-post="/roles/{{ r.id }}/documents/cover_letter" hx-target="#work" hx-swap="innerHTML">Write cover letter</button>
+    <a class="btn" href="/practice?role={{ r.id }}">Practice interview</a>
+  </div>
+  <p id="work" class="small" role="status"></p>
+  {% if docs %}<h3>Documents</h3><ul class="list">{% for d in docs %}
+    <li><a href="/documents/{{ d.id }}">{{ 'Resume' if d.kind == 'resume' else 'Cover letter' }}</a> <span class="pill {{ d.status }}">{{ d.status }}</span>
+      <span class="muted small">{{ d.updated|when }}</span></li>{% endfor %}</ul>{% endif %}
+</section>
+
+<section class="card" id="people">
+  <h2>People</h2>
+  <p class="small muted">Someone who can refer you or talk with you. Drafts use only your profile facts; you copy them into LinkedIn or email yourself.</p>
+  {% for c in contacts %}
+  <div class="contact" id="contact-{{ c.id }}">
+    <p><strong>{{ c.name }}</strong>{% if c.title %} · {{ c.title }}{% endif %} <span class="pill {{ 'offer' if c.relation == 'warm' else '' }}">{{ c.relation }}</span>
+      <span class="pill">{{ c.status.replace('_', ' ') }}</span>{% if c.last_contacted %} <span class="muted small">last contacted {{ c.last_contacted }}</span>{% endif %}
+      {% if c.linkedin_url %}<a class="small" href="{{ c.linkedin_url }}" target="_blank" rel="noopener noreferrer">LinkedIn ↗</a>{% endif %}</p>
+    {% if c.how_known %}<p class="small muted">{{ c.how_known }}</p>{% endif %}
+    <div class="row wrap">
+      {% for kind, spec in outreach_kinds.items() %}<button class="btn small" hx-post="/contacts/{{ c.id }}/draft/{{ kind }}" hx-target="#draft-{{ c.id }}" hx-swap="innerHTML">Draft {{ spec.label.lower() }}<span class="sr-only"> to {{ c.name }}</span></button>{% endfor %}
+      <button class="link small" hx-post="/contacts/{{ c.id }}/status/replied">they replied<span class="sr-only">: {{ c.name }}</span></button>
+      <button class="link small" hx-post="/contacts/{{ c.id }}/status/no_reply">no reply<span class="sr-only">: {{ c.name }}</span></button>
+      <button class="link small" hx-post="/contacts/{{ c.id }}/delete" hx-confirm="Remove {{ c.name }}?">remove<span class="sr-only"> {{ c.name }}</span></button>
+    </div>
+    <p id="draft-{{ c.id }}" class="small" role="status"></p>
+    {% for m in c.messages %}
+    <form hx-post="/outreach/messages/{{ m.id }}" class="form draft">
+      <p class="small"><strong>{{ outreach_kinds[m.kind].label }}</strong> {% if m.status == 'sent' %}<span class="pill applied">sent {{ m.sent_on }}</span>{% endif %}</p>
+      {% if outreach_kinds[m.kind].subject %}<label>Subject<input name="subject" value="{{ m.subject }}" id="subject-{{ m.id }}"></label>{% endif %}
+      <label>Message <span class="muted small">(up to {{ outreach_kinds[m.kind].limit }} characters)</span>
+        <textarea name="body" rows="5" id="body-{{ m.id }}" maxlength="{{ outreach_kinds[m.kind].limit }}">{{ m.body }}</textarea></label>
+      <div class="row"><button class="btn small">Save edits<span class="sr-only"> to the message for {{ c.name }}</span></button>
+        <button class="btn small" type="button" data-copy="#body-{{ m.id }}">Copy<span class="sr-only"> message to {{ c.name }}</span></button>
+        {% if m.status != 'sent' %}<button class="btn small primary" type="button" hx-post="/outreach/messages/{{ m.id }}/sent">I sent it<span class="sr-only">: message to {{ c.name }}</span></button>{% endif %}</div>
+    </form>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <details id="add-person" {% if not contacts %}open{% endif %}><summary><strong>Add a person</strong></summary>
+    <form hx-post="/roles/{{ r.id }}/contacts" class="form grid two">
+      <label>Name<input name="name" required></label>
+      <label>Their title<input name="title" placeholder="e.g. Nurse Manager, Store Manager, Recruiter"></label>
+      <label>Relationship<select name="relation"><option value="cold">Cold: we haven't met</option><option value="warm">Warm: we know each other</option></select></label>
+      <label>How you know them<input name="how_known" placeholder="e.g. worked together at Acme"></label>
+      <label>LinkedIn profile<input name="linkedin_url" placeholder="https://www.linkedin.com/in/…"></label>
+      <label>Email<input name="email" type="email"></label>
+      <label class="span2">Notes<textarea name="notes" rows="2" placeholder="Anything that helps: what they work on, a post of theirs you liked"></textarea></label>
+      <div class="span2"><button class="btn">Add person</button></div>
+    </form>
+  </details>
+</section>
+
+<section class="card" id="remind">
+  <h2>Remind me</h2>
+  <form hx-post="/reminders" class="row wrap">
+    <input type="hidden" name="role_id" value="{{ r.id }}">
+    <input name="text" class="grow" value="{{ r.next_step or ('Follow up with ' ~ r.company) }}" required aria-label="What to remind you about">
+    <select name="preset" aria-label="When">{% for code, label in presets.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}<option value="">Pick a time →</option></select>
+    <input type="datetime-local" name="when" aria-label="Or pick a date and time">
+    <button class="btn">Set reminder</button>
+  </form>
+  {% if reminders %}<ul class="list">{% for m in reminders %}<li>{{ m.text }} <span class="pill">{{ m.due|when }}</span>
+    <button class="link small" hx-post="/reminders/{{ m.id }}/cancel">cancel<span class="sr-only"> reminder: {{ m.text }}</span></button></li>{% endfor %}</ul>{% endif %}
+</section>
+
+<section class="card" id="timeline">
+  <h2>Timeline</h2>
+  <form hx-post="/roles/{{ r.id }}/event" class="row wrap">
+    <select name="kind" aria-label="Kind of entry">{% for k in event_kinds if k != 'status' %}<option value="{{ k }}">{{ k.title() }}</option>{% endfor %}</select>
+    <input type="date" name="on_date" value="{{ today_iso }}" aria-label="Date">
+    <input name="text" class="grow" placeholder="e.g. Phone screen with Dana, 30 min" aria-label="What happened">
+    <button class="btn">Add</button>
+  </form>
+  <ul class="timeline">{% for e in events %}
+    <li><span class="pill">{{ e.on_date }}</span> <strong>{{ e.kind }}</strong> {{ e.text }}
+      <button class="link small" hx-post="/roles/{{ r.id }}/event/{{ e.id }}/delete" hx-confirm="Delete this entry?">delete<span class="sr-only"> {{ e.kind }} on {{ e.on_date }}</span></button></li>
+  {% else %}<li class="muted">Nothing yet.</li>{% endfor %}</ul>
+</section>
+
+<section class="card" id="details">
+  <h2>Details</h2>
+  <form hx-post="/roles/{{ r.id }}" class="form grid two">
+    <label>Company<input name="company" value="{{ r.company }}"></label>
+    <label>Title<input name="title" value="{{ r.title }}"></label>
+    <label>Location<input name="location" value="{{ r.location }}"></label>
+    <label>Work mode<select name="work_mode">{% for m in ["", "remote", "hybrid", "onsite"] %}<option value="{{ m }}" {{ 'selected' if r.work_mode == m }}>{{ m.title() or 'Unknown' }}</option>{% endfor %}</select></label>
+    <label>Pay from<input name="pay_min" value="{{ r.pay_min or '' }}" placeholder="e.g. 17/hr or 45k a year" maxlength="60"></label>
+    <label>Pay to<input name="pay_max" value="{{ r.pay_max or '' }}" placeholder="e.g. 19/hr or 55k a year" maxlength="60"></label>
+    <p class="muted small span2">Type pay any way: 17/hr, 45k a year, 3,000 a month or a range like 17-19/hr. It's saved as a full-time yearly amount.</p>
+    <label>Posted on<input type="date" name="posted_on" value="{{ r.posted_on }}"></label>
+    <label>Link<input name="url" value="{{ r.url }}"></label>
+    <label class="span2">Notes<textarea name="notes" rows="3">{{ r.notes }}</textarea></label>
+    <label class="span2">Posting text {% if r.url %}<button class="link small" type="button" hx-post="/roles/{{ r.id }}/fetch">fetch from link</button>{% endif %}
+      <textarea name="posting" rows="10">{{ r.posting }}</textarea></label>
+    <div class="span2"><button class="btn primary">Save details</button></div>
+  </form>
+</section>
+
+{% if history %}
+<details class="card"><summary><strong>Change history</strong></summary>
+  <ul class="list small">{% for h in history %}<li>{{ h.at|when }} · {{ h.actor }} · {{ h.summary }}
+    {% if h.action in ('update', 'create') and not h.undone and h.entity == 'role' and h.action == 'update' %}<button class="link small" hx-post="/undo/{{ h.id }}" hx-swap="outerHTML">Undo<span class="sr-only">: {{ h.summary }}</span></button>{% endif %}
+    {% if h.undone %}<span class="muted">(undone)</span>{% endif %}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+{% endblock %}

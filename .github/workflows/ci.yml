@@ -1,0 +1,50 @@
+name: ci
+on:
+  push: {branches: [main]}
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install --require-hashes --no-deps -r requirements.lock && python -m pip install --no-deps -e . && python -m pip install pytest ruff bandit pip-audit
+      - run: ruff check src tests
+      - run: bandit -q -r src -ll
+      - run: pip-audit --strict -r requirements.lock
+      - run: pytest
+      - run: bash -n scripts/install.sh && bash -n scripts/bootstrap-vm.sh
+  vm-python:
+    # jobsctl runs on the VM with Debian 12's own Python (3.11.2), not the app's. Test it there.
+    runs-on: ubuntu-24.04
+    container: debian:12
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update -qq && apt-get install -y -qq python3-pytest
+      - run: python3 -m pytest tests/test_jobsctl.py --noconftest -p no:cacheprovider
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -qq shellcheck && shellcheck -S warning -x scripts/install.sh scripts/bootstrap-vm.sh scripts/move-to-free.sh scripts/lib-gcp.sh
+  image:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build for amd64 and arm64
+        uses: docker/build-push-action@v6
+        with: {context: ., file: deploy/Dockerfile, platforms: "linux/amd64,linux/arm64", push: false, tags: "jobhq:ci"}
+      - name: Build amd64 for scanning
+        uses: docker/build-push-action@v6
+        with: {context: ., file: deploy/Dockerfile, platforms: linux/amd64, load: true, tags: "jobhq:scan"}
+      - name: Scan the image
+        # Pinned by commit: 76 of this action's version tags were hijacked in March 2026 (CVE-2026-33634).
+        # v0.35.0 was not affected, per its maintainers' release notes.
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with: {image-ref: "jobhq:scan", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1"}

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block main_class %}chat-page{% endblock %}
+{% block content %}
+<div class="chat-layout">
+  {% if kind == 'chat' %}
+  <aside class="threads" aria-label="Chats">
+    <button class="btn small" hx-post="/chat/new">New chat</button>
+    <details class="thread-list" data-open-wide open><summary>Your chats ({{ threads|length }})</summary>
+      <ul>{% for t in threads %}<li><a href="/chat?t={{ t.id }}" {% if t.id == thread.id %}aria-current="page"{% endif %}>{{ t.title or 'Chat' }}</a></li>{% endfor %}</ul>
+    </details>
+  </aside>
+  {% endif %}
+  <section class="chat">
+    <h1>{{ 'Interview' if kind == 'interview' else 'Chat' }}</h1>
+    {% if kind == 'interview' %}<p class="muted small">Answer in your own words. Facts worth keeping go to <a href="/suggestions">Suggestions</a> for your approval.</p>
+    {% else %}<p class="muted small">Ask about your roles, log what happened ("Acme moved my interview to Thursday at 2"), or set reminders. Changes can be undone.</p>{% endif %}
+    <div id="messages" class="messages" role="log" aria-live="polite" tabindex="0" aria-label="Conversation">{% include "_messages.html" %}</div>
+    <form class="composer" hx-post="/chat/{{ thread.id }}/send" hx-target="#messages" hx-swap="beforeend" data-reset-on-send>
+      <textarea name="text" rows="2" aria-label="{{ 'Your answer' if kind == 'interview' else 'Message' }}" aria-describedby="composer-hint"
+        placeholder="{{ 'Type your answer…' if kind == 'interview' else 'Message…' }}" required data-enter-sends></textarea>
+      <button class="btn primary">Send</button>
+    </form>
+    <p class="muted small composer-hint" id="composer-hint">Enter sends. Shift+Enter starts a new line.</p>
+    {% if kind == 'interview' and questions %}
+    <details class="card"><summary><strong>Open questions about tools from your roles ({{ questions|length }})</strong></summary>
+      <ul class="list">{% for q in questions %}
+        <li id="q{{ q.id }}"><p>{{ q.question }} <span class="muted small">{{ q.reason }}</span></p>
+          <form hx-post="/questions/{{ q.id }}/answer" class="row"><input name="answer" class="grow" placeholder="Your answer" aria-label="Your answer: {{ q.question }}"><button class="btn small">Answer</button></form>
+          <div class="row"><button class="link small" hx-post="/questions/{{ q.id }}/never" hx-target="#q{{ q.id }}" hx-swap="delete">Never used it<span class="sr-only">: {{ q.topic }}</span></button>
+            <button class="link small" hx-post="/questions/{{ q.id }}/skip" hx-target="#q{{ q.id }}" hx-swap="delete">Skip<span class="sr-only">: {{ q.topic }}</span></button></div></li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Profile</h1>
+<p class="muted">This is the only source the AI may use for claims about you. Keep it true and specific.
+  {% if missing %}<br><strong>Still missing:</strong> {{ missing|join(', ') }}.{% endif %}</p>
+
+<section class="card" id="basics">
+  <h2>Basic information</h2>
+  <form hx-post="/profile/basics" class="form grid two">
+    {% macro field(name, label, type="text", hint="") %}
+      <label>{{ label }}<input type="{{ type }}" name="{{ name }}" value="{{ b.get(name) or '' }}" {% if hint %}placeholder="{{ hint }}"{% endif %}></label>
+    {% endmacro %}
+    {{ field("name", "Full name") }}
+    {{ field("email", "Email", "email") }}
+    {{ field("phone", "Phone", "tel") }}
+    {{ field("city", "City") }}
+    {{ field("region", "State or region") }}
+    {{ field("postal_code", "ZIP or postal code") }}
+    {{ field("country", "Country") }}
+    {{ field("linkedin", "LinkedIn URL", "url", "https://www.linkedin.com/in/…") }}
+    {{ field("github", "GitHub URL", "url") }}
+    {{ field("website", "Website", "url") }}
+    <label class="span2">Headline <input type="text" name="headline" value="{{ b.headline or '' }}" placeholder="e.g. Registered Nurse | Patient Care, Epic  or  Recent graduate in Marketing"></label>
+    <label class="span2">Summary of your experience <textarea name="summary" rows="4">{{ b.summary or '' }}</textarea></label>
+    <label class="span2">Job titles you want (one per line) <textarea name="target_titles" rows="3">{{ (b.target_titles or [])|join('\n') }}</textarea></label>
+    {{ field("level", "Target level", "text", "e.g. entry level, experienced, supervisor, manager") }}
+    <fieldset class="choices"><legend>Work modes you'd accept</legend>
+      {% for m in modes %}<label><input type="checkbox" name="work_modes" value="{{ m }}" {{ 'checked' if m in (b.work_modes or []) }}> {{ m.title() }}</label>{% endfor %}
+    </fieldset>
+    <label>Longest commute for on-site<input type="text" name="max_commute_miles" inputmode="decimal" maxlength="30" placeholder="e.g. 15 miles or 25 km"
+      value="{{ b.max_commute_text or (b.max_commute_miles if b.max_commute_miles is not none else '') }}"></label>
+    {% for name, label, hint in [("pay_floor", "Lowest base pay you'd take", "e.g. 18/hr, 45k a year or 3,000 a month"), ("pay_target", "Target base pay", "e.g. 22/hr or 55k a year")] %}
+      {% set detail = b.get(name ~ '_detail') or {} %}
+      <label>{{ label }}<input type="text" name="{{ name }}" maxlength="60" placeholder="{{ hint }}" value="{{ detail.as_typed or b.get(name) or '' }}">
+        {% if detail.yearly and detail.period != 'year' %}<span class="muted small">About {{ detail.yearly|pay_range(none, detail.currency) }}</span>{% endif %}</label>
+    {% endfor %}
+    <p class="muted small span2">Type pay the way you think of it: hourly (18/hr), monthly (3,000 a month) or yearly (45k a year), in any currency (€45k, C$60k).
+      Hourly pay is compared with yearly pay at full time (2,080 hours a year).</p>
+    {{ field("work_authorization", "Work authorization", "text", "e.g. US citizen") }}
+    <label class="span2">Sectors you're aiming for (one per line) <textarea name="target_sectors" rows="3">{{ (b.target_sectors or [])|join('\n') }}</textarea></label>
+    <label class="span2">Deal-breakers (one per line) <textarea name="avoid" rows="3" placeholder="e.g. overnight shifts&#10;commission-only pay">{{ (b.avoid or [])|join('\n') }}</textarea></label>
+    <label class="span2">Anything else the AI should know <textarea name="notes" rows="3">{{ b.notes or '' }}</textarea></label>
+    <div class="span2"><button class="btn primary">Save basic information</button></div>
+  </form>
+</section>
+
+<section class="card" id="experience">
+  <h2>Work history</h2>
+  {% for j in jobs %}
+  <details class="job" id="job-{{ j.id }}" {% if loop.first %}open{% endif %}>
+    <summary><strong>{{ j.title }}</strong> · {{ j.company }} <span class="muted small">{{ j.start_date }} – {{ j.end_date or 'Present' }}</span></summary>
+    <form hx-post="/profile/experience" class="form grid two">
+      <input type="hidden" name="id" value="{{ j.id }}">
+      <label>Company<input name="company" value="{{ j.company }}" required></label>
+      <label>Title<input name="title" value="{{ j.title }}" required></label>
+      <label>Location<input name="location" value="{{ j.location }}"></label>
+      <label>Start (e.g. Jun 2022)<input name="start_date" value="{{ j.start_date }}"></label>
+      <label>End (blank if current)<input name="end_date" value="{{ j.end_date }}"></label>
+      <label class="span2">One-line summary<textarea name="summary" rows="2">{{ j.summary }}</textarea></label>
+      <div class="span2 row"><button class="btn">Save job</button>
+        <button class="btn danger small" type="button" hx-post="/profile/experience/{{ j.id }}/delete" hx-confirm="Delete this job and keep its facts as loose facts?">Delete job<span class="sr-only">: {{ j.title }} at {{ j.company }}</span></button></div>
+    </form>
+    <h3>Facts and results</h3>
+    <ul class="facts">{% for f in j.facts %}
+      <li>{{ f.text }} {% if f.source == 'interview' %}<span class="pill small">from interview</span>{% endif %}
+        <button class="link small" hx-post="/profile/facts/{{ f.id }}/delete" hx-confirm="Delete this fact?">delete<span class="sr-only"> fact: {{ f.text|truncate(60) }}</span></button></li>{% endfor %}</ul>
+    <form hx-post="/profile/facts" class="row">
+      <input type="hidden" name="experience_id" value="{{ j.id }}">
+      <input name="text" aria-label="New fact or result for {{ j.title }} at {{ j.company }}" placeholder="e.g. Trained 6 new hires on the register and stock system" class="grow">
+      <button class="btn">Add fact</button>
+    </form>
+  </details>
+  {% endfor %}
+  <details id="add-job" {% if not jobs %}open{% endif %}><summary><strong>Add a job</strong></summary>
+    <form hx-post="/profile/experience" class="form grid two">
+      <label>Company<input name="company" required></label>
+      <label>Title<input name="title" required></label>
+      <label>Location<input name="location"></label>
+      <label>Start (e.g. Jun 2022)<input name="start_date"></label>
+      <label>End (blank if current)<input name="end_date"></label>
+      <label class="span2">One-line summary<textarea name="summary" rows="2"></textarea></label>
+      <div class="span2"><button class="btn primary">Add job</button></div>
+    </form>
+  </details>
+</section>
+
+<section class="card" id="other-facts">
+  <h2>Other facts</h2>
+  <ul class="facts">{% for f in loose %}<li>{{ f.text }} <button class="link small" hx-post="/profile/facts/{{ f.id }}/delete" hx-confirm="Delete this fact?">delete<span class="sr-only"> fact: {{ f.text|truncate(60) }}</span></button></li>{% endfor %}</ul>
+  <form hx-post="/profile/facts" class="row"><input name="text" aria-label="New fact: awards, volunteer work, certifications and so on" placeholder="Awards, volunteer work, certifications, languages…" class="grow"><button class="btn">Add</button></form>
+</section>
+
+<section class="card" id="education">
+  <h2>Education</h2>
+  <ul class="list">{% for e in education %}{% set what = [e.degree, e.field]|select|join(' ') %}<li>{% if what %}{{ what }}, {% endif %}{{ e.school }} <span class="muted small">{{ [e.start_date, e.end_date]|select|join(' – ') }}</span>
+    <button class="link small" hx-post="/profile/education/{{ e.id }}/delete" hx-confirm="Delete {{ e.school }} from your education?">delete<span class="sr-only"> {{ e.school }}</span></button></li>{% endfor %}</ul>
+  <form hx-post="/profile/education" class="form grid three">
+    <label>School<input name="school" required></label><label>Degree<input name="degree" placeholder="e.g. BA, Associate's, Certificate"></label>
+    <label>Field<input name="field"></label><label>Start<input name="start_date"></label><label>End<input name="end_date"></label>
+    <div><button class="btn">Add education</button></div>
+  </form>
+</section>
+
+<section class="card" id="certifications">
+  <h2>Certifications and licenses</h2>
+  <p class="small muted">Licenses, certifications and training a job may ask for, like a CNA license, CPR, a forklift or AWS certification. They appear on your resume as you write them.</p>
+  <ul class="list">{% for c in certifications %}<li><strong>{{ c.name }}</strong>{% if c.issuer %}, {{ c.issuer }}{% endif %} <span class="muted small">{{ c.on_date }}</span>
+    <button class="link small" hx-post="/profile/certifications/{{ c.id }}/delete" hx-confirm="Delete {{ c.name }}?">delete<span class="sr-only"> {{ c.name }}</span></button></li>{% endfor %}</ul>
+  <form hx-post="/profile/certifications" class="form grid three">
+    <label>Certification or license<input name="cert_name" required maxlength="160" placeholder="e.g. Certified Nursing Assistant (CNA)"></label>
+    <label>Issued by<input name="cert_issuer" maxlength="160" placeholder="e.g. Maryland Board of Nursing"></label>
+    <label>Date<input name="cert_date" maxlength="40" placeholder="e.g. Jun 2025"></label>
+    <div><button class="btn">Add certification</button></div>
+  </form>
+</section>
+
+<section class="card" id="projects">
+  <h2>Projects</h2>
+  <p class="small muted">School, personal or volunteer projects that show what you can do. Useful when your work history is short.</p>
+  <ul class="list">{% for p in projects %}<li><strong>{{ p.name }}</strong> <span class="muted small">{{ p.on_date }}</span>{% if p.what %}<br><span class="small">{{ p.what }}</span>{% endif %}
+    <button class="link small" hx-post="/profile/projects/{{ p.id }}/delete" hx-confirm="Delete {{ p.name }}?">delete<span class="sr-only"> {{ p.name }}</span></button></li>{% endfor %}</ul>
+  <form hx-post="/profile/projects" class="form grid three">
+    <label>Project<input name="project_name" required maxlength="160" placeholder="e.g. Bus arrival app"></label>
+    <label>Date<input name="project_date" maxlength="40" placeholder="e.g. Spring 2025"></label>
+    <label class="span2">What you did and what came of it<textarea name="project_what" rows="2" maxlength="600" placeholder="e.g. Built a web app that shows live bus arrivals; 300 classmates used it"></textarea></label>
+    <div><button class="btn">Add project</button></div>
+  </form>
+</section>
+
+<section class="card" id="skills">
+  <h2>Skills and tools</h2>
+  <p class="small muted">"Never used" tools are never claimed in your documents, and the AI won't ask about them again.</p>
+  <ul class="tags">{% for s in skills %}
+    <li class="tag {{ 'never' if s.status == 'never' }}">{{ s.name }}{% if s.level %} · {{ s.level }}{% endif %}{% if s.years %} · {{ s.years|round(1) }}y{% endif %}{% if s.status == 'never' %} (never used){% endif %}
+      <button class="link small" hx-post="/profile/skills/{{ s.id }}/delete" hx-confirm="Remove {{ s.name }} from your skills?" aria-label="Remove {{ s.name }}">×</button></li>{% endfor %}</ul>
+  <form hx-post="/profile/skills" class="form grid four">
+    <label>Skill or tool<input name="name" required></label>
+    <label>Status<select name="status"><option value="have">I have it</option><option value="never">Never used</option></select></label>
+    <label>Level<input name="level" placeholder="e.g. beginner, confident, expert"></label>
+    <label>Years<input name="years" type="number" step="any" min="0" max="60" inputmode="decimal"></label>
+    <div><button class="btn">Add skill</button></div>
+  </form>
+</section>
+{% endblock %}

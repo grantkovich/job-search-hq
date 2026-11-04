@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Reminders</h1>
+{% if not push_count %}<p class="alert">Notifications are off on all devices, so reminders only show here. <a href="/setup#push">Turn them on</a>.</p>{% endif %}
+<section class="card" id="new">
+  <form hx-post="/reminders" class="row wrap">
+    <input name="text" class="grow" placeholder="Remind me to…" aria-label="What to remind you about" required>
+    <select name="preset" aria-label="When">{% for code, label in presets.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}<option value="">Pick a time →</option></select>
+    <input type="datetime-local" name="when" aria-label="Or pick a date and time">
+    <button class="btn primary">Set</button>
+  </form>
+</section>
+<section class="card" id="coming-up">
+  <h2>Coming up</h2>
+  <ul class="list">{% for r in pending %}
+    <li><strong>{{ r.due|when("%a %b %-d, %-I:%M %p") }}</strong> {{ r.text }} {% if r.role_id %}<a class="small" href="/roles/{{ r.role_id }}">role</a>{% endif %}
+      <button class="link small" hx-post="/reminders/{{ r.id }}/cancel">cancel<span class="sr-only"> reminder: {{ r.text }}</span></button></li>
+  {% else %}<li class="muted">Nothing scheduled.</li>{% endfor %}</ul>
+</section>
+{% if sent %}
+<section class="card" id="sent">
+  <h2>Sent recently</h2>
+  <ul class="list">{% for r in sent %}
+    <li>{{ r.text }} <span class="muted small">{{ r.sent|when }}</span>
+      <button class="link small" hx-post="/reminders/{{ r.id }}/done">done<span class="sr-only">: {{ r.text }}</span></button>
+      <button class="link small" hx-post="/reminders/{{ r.id }}/hour">snooze 1 hour<span class="sr-only">: {{ r.text }}</span></button>
+      <button class="link small" hx-post="/reminders/{{ r.id }}/tomorrow">tomorrow 9 AM<span class="sr-only">: {{ r.text }}</span></button></li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}

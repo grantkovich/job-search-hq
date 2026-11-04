@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Outreach</h1>
+<p class="muted">People at the companies you're targeting. Referrals and real conversations get you past the application pile. Add people from a role's page.</p>
+{% if due %}
+<section class="card accent">
+  <h2>Follow up</h2>
+  <ul class="list">{% for c in due %}<li><a href="{{ '/roles/' ~ c.role_id ~ '#people' if c.role_id else '#' }}">{{ c.name }}</a> {{ c.company }} <span class="muted small">no reply since {{ c.last_contacted }}</span></li>{% endfor %}</ul>
+</section>
+{% endif %}
+<section class="card">
+  <div class="table-wrap"><table class="table cards">
+    <thead><tr><th>Person</th><th>Company</th><th>Role</th><th>Relationship</th><th>Status</th><th>Last contacted</th></tr></thead>
+    <tbody>{% for c in contacts %}
+      <tr><td data-label="Person">{% if c.role_id %}<a href="/roles/{{ c.role_id }}#people">{{ c.name }}</a>{% else %}{{ c.name }}{% endif %}<br><span class="muted small">{{ c.title }}</span></td>
+        <td data-label="Company">{{ c.company }}</td><td data-label="Role" class="small">{{ c.role_title or '' }}</td><td data-label="Relationship"><span class="pill {{ 'offer' if c.relation == 'warm' else '' }}">{{ c.relation }}</span></td>
+        <td data-label="Status"><span class="pill">{{ c.status.replace('_', ' ') }}</span></td><td data-label="Last contacted" class="small">{{ c.last_contacted }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Nobody yet. Open a role and add someone under People.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

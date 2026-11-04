@@ -1,0 +1,62 @@
+[project]
+name = "jobhq"
+version = "0.1.0"
+description = "Job Search HQ: a self-hosted, AI-assisted job search workspace. One copy per person, Google sign-in, Claude does the heavy lifting, you approve what matters."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Grant Kovich" }]
+classifiers = ["Programming Language :: Python :: 3", "Framework :: FastAPI", "Operating System :: POSIX :: Linux",
+               "Topic :: Office/Business", "Private :: Do Not Upload"]
+dependencies = [
+    "fastapi==0.162.0",
+    "starlette==1.10.0",
+    "uvicorn[standard]==0.54.0",
+    "jinja2==3.1.6",
+    "python-multipart==0.0.33",
+    "httpx==0.28.1",
+    "cryptography==50.0.2",
+    "claude-agent-sdk==0.2.177",
+    "markdown-it-py==4.2.0",
+    "typst==0.15.0",
+    "pypdf==6.21.4",
+    "pywebpush==2.5.0",
+]
+
+[project.optional-dependencies]
+voice = ["faster-whisper==1.2.1"]
+dev = ["pytest==9.2.0", "ruff", "bandit", "pip-audit"]
+
+[project.urls]
+Homepage = "https://github.com/grantkovich/job-search-hq"
+Documentation = "https://github.com/grantkovich/job-search-hq/blob/main/docs/start-here.md"
+Issues = "https://github.com/grantkovich/job-search-hq/issues"
+
+[project.scripts]
+jobhq = "jobhq.cli:main"
+
+[build-system]
+requires = ["setuptools>=77"]  # 77 understands license = "MIT" (PEP 639)
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jobhq = ["templates/**/*", "static/**/*", "documents/*.typ"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["e2e: browser tests (need playwright)", "live: real Claude calls (need JOBHQ_LIVE_CLAUDE)", "stack: the real Docker stack (need JOBHQ_STACK_ROOT)"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "UP", "SIM", "I"]
+ignore = ["S101", "S608", "SIM105"]  # asserts in tests; SQL is built only from constant fragments, values are always bound
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]

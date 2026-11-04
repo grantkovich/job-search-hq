@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Suggestions</h1>
+<p class="muted">The AI suggests additions to your profile from your interview and chats. Nothing is saved until you approve it. Edit the wording first if you like.</p>
+{% for s in items %}
+<section class="card suggestion" id="s{{ s.id }}">
+  <p class="small muted">{{ s.at|when }} · {{ s.kind.replace('_', ' ') }}</p>
+  {% if s.kind == 'profile_fact' %}
+  <form hx-post="/suggestions/{{ s.id }}/approve" hx-target="#s{{ s.id }}" hx-swap="delete" class="form">
+    <label>Fact<textarea name="text" rows="2">{{ s.payload.text }}</textarea></label>
+    <div class="row"><button class="btn primary">Approve<span class="sr-only">: {{ s.payload.text|truncate(60) }}</span></button>
+      <button class="btn" type="button" hx-post="/suggestions/{{ s.id }}/reject" hx-target="#s{{ s.id }}" hx-swap="delete">Reject<span class="sr-only">: {{ s.payload.text|truncate(60) }}</span></button></div>
+  </form>
+  {% else %}
+  <p><strong>{{ s.title }}</strong></p>
+  {% if s.kind == 'skill' and s.payload.note %}<p class="small">{{ s.payload.note }}</p>{% endif %}
+  {% if s.kind == 'profile_field' %}<p class="small">New value: {{ s.payload.value }}</p>{% endif %}
+  <div class="row"><button class="btn primary" hx-post="/suggestions/{{ s.id }}/approve" hx-target="#s{{ s.id }}" hx-swap="delete">Approve<span class="sr-only">: {{ s.title }}</span></button>
+    <button class="btn" hx-post="/suggestions/{{ s.id }}/reject" hx-target="#s{{ s.id }}" hx-swap="delete">Reject<span class="sr-only">: {{ s.title }}</span></button></div>
+  {% endif %}
+</section>
+{% else %}
+<p class="card muted">Nothing waiting. <a href="/interview">Do some interview questions</a> to build your profile.</p>
+{% endfor %}
+{% endblock %}

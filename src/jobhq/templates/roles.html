@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row between"><h1>Roles</h1><a class="btn primary" href="/roles/new">Add a role</a></div>
+<nav class="tabs" aria-label="Views">
+  <a href="/roles" {% if show == 'lanes' %}aria-current="page"{% endif %}>Open roles</a>
+  <a href="/roles?show=pipeline" {% if show == 'pipeline' %}aria-current="page"{% endif %}>Applied ({{ board.pipeline|length }})</a>
+  <a href="/roles?show=closed" {% if show == 'closed' %}aria-current="page"{% endif %}>Closed ({{ board.closed|length }})</a>
+</nav>
+
+{% macro role_table(rows, cols="lane") %}
+<div class="table-wrap"><table class="table cards">
+  <thead><tr><th>Role</th><th>Company</th><th>Fit</th><th>{{ 'Why' if cols == 'lane' else 'Status' }}</th><th>Next step</th></tr></thead>
+  <tbody>{% for r in rows %}
+    <tr><td data-label="Role"><a href="/roles/{{ r.id }}">{{ r.title }}</a></td><td data-label="Company">{{ r.company }}</td>
+      <td data-label="Fit">{% if r.fit_score is not none %}<span class="grade g{{ r.grade }}">{{ r.grade }} {{ r.fit_score }}</span>{% else %}<span class="muted">—<span class="sr-only">not scored</span></span>{% endif %}</td>
+      <td data-label="{{ 'Why' if cols == 'lane' else 'Status' }}">{% if cols == 'lane' %}<span class="small">{{ r.lane_why }}</span>{% else %}<span class="pill {{ r.status }}">{{ r.status }}</span>{% endif %}</td>
+      <td data-label="Next step" class="small">{{ r.next_step }} {{ r.next_step_date }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">None.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endmacro %}
+
+{% if show == 'pipeline' %}
+  {{ role_table(board.pipeline, "status") }}
+{% elif show == 'closed' %}
+  {{ role_table(board.closed, "status") }}
+{% else %}
+  {% set lanes = [("ready", "Ready to apply", "Passes every check and fits well."),
+                  ("call", "Your call", "Fails a check, or needs a judgment only you can make."),
+                  ("check", "Needs checking", "Something is unknown, or it isn't scored yet."),
+                  ("later", "Later", "A weaker fit."),
+                  ("expired", "Expired", "Closed or too old.")] %}
+  {% for key, label, help in lanes %}{% if board[key] or key == 'ready' %}
+  <section class="lane">
+    <h2>{{ label }} <span class="muted small">{{ board[key]|length }} · {{ help }}</span></h2>
+    {{ role_table(board[key]) }}
+  </section>
+  {% endif %}{% endfor %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="small"><a href="/roles/{{ role.id }}">← {{ role.title }} · {{ role.company }}</a></p>
+<div class="row between">
+  <h1>{{ 'Resume' if d.kind == 'resume' else 'Cover letter' }} <span class="pill {{ d.status }}">{{ d.status }}</span></h1>
+  <div class="row">
+    <a class="btn" href="/documents/{{ d.id }}/pdf" target="_blank" rel="noopener">View PDF</a>
+    <a class="btn" href="/documents/{{ d.id }}/pdf?download=1">Download</a>
+    {% if d.status != 'approved' %}<button class="btn primary" hx-post="/documents/{{ d.id }}/approve"
+      {% if d.checks|selectattr('ok', 'equalto', false)|list %}hx-confirm="Some checks didn't pass. Approve anyway?"{% endif %}>Approve</button>{% endif %}
+    <button class="btn danger small" hx-post="/documents/{{ d.id }}/delete" hx-confirm="Delete this document?">Delete<span class="sr-only"> this {{ 'resume' if d.kind == 'resume' else 'cover letter' }}</span></button>
+  </div>
+</div>
+
+<section class="card">
+  <h2>Checks</h2>
+  <ul class="checks">{% for c in d.checks %}<li class="{{ 'ok' if c.ok else 'fail' }}"><span class="sr-only">{{ 'Passed:' if c.ok else 'Failed:' }} </span><strong>{{ c.name }}</strong>{% if c.detail %}: {{ c.detail }}{% endif %}</li>{% endfor %}</ul>
+  {% if d.content.keywords_missing %}<p class="small">Posting terms your profile can't honestly support (left out on purpose): {{ d.content.keywords_missing|join(', ') }}.
+    If you do have these, add them to your profile and redraft.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Edit</h2>
+  <p class="small muted">Change any line, then rebuild. Each line shows the profile facts it relies on.</p>
+  <form hx-post="/documents/{{ d.id }}/edit" class="form" hx-indicator="#rebuilding">
+    {% if d.kind == 'resume' %}
+      <label>Summary<textarea name="summary" rows="3">{{ d.content.summary }}</textarea></label>
+      {% for e in d.content.experience %}{% set e_i = loop.index0 %}
+        <h3>{{ jobs[e.experience_id].title if e.experience_id in jobs else 'Job' }} · {{ jobs[e.experience_id].company if e.experience_id in jobs else '' }}</h3>
+        {% for b in e.bullets %}
+          <label class="bullet"><textarea name="b-{{ e_i }}-{{ loop.index0 }}" rows="2">{{ b.text }}</textarea>
+            <span class="small muted cites">Facts: {% for f in b.fact_ids %}{% if f in facts %}<span class="cite">#{{ f }} {{ facts[f]|truncate(140) }}</span>{% else %}<span class="cite bad">#{{ f }} (missing from your profile)</span>{% endif %}{% else %}<span class="bad">none cited</span>{% endfor %}</span></label>
+        {% endfor %}
+      {% endfor %}
+      <label>Skills (comma separated)<input name="skills" value="{{ d.content.skills|join(', ') }}"></label>
+    {% else %}
+      <label>Greeting<input name="greeting" value="{{ d.content.greeting }}"></label>
+      {% for p in d.content.paragraphs %}
+        <label class="bullet"><textarea name="p-{{ loop.index0 }}" rows="5">{{ p.text }}</textarea>
+          <span class="small muted cites">Facts: {% for f in p.fact_ids %}{% if f in facts %}<span class="cite">#{{ f }} {{ facts[f]|truncate(140) }}</span>{% else %}<span class="cite bad">#{{ f }} (missing from your profile)</span>{% endif %}{% else %}none cited{% endfor %}</span></label>
+      {% endfor %}
+      <label>Closing<input name="closing" value="{{ d.content.closing }}"></label>
+    {% endif %}
+    <div class="row"><button class="btn primary">Rebuild PDF and re-check</button> <span role="status"><span id="rebuilding" class="htmx-indicator small">Rebuilding…</span></span></div>
+  </form>
+  <p class="small muted">Clear a line's text to remove it.</p>
+</section>
+{% endblock %}

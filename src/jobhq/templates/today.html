@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{% if name %}Hi {{ name }}{% else %}Today{% endif %}</h1>
+
+{% if gmail_status %}
+<p class="alert bad"><strong>Gmail is disconnected.</strong> {{ gmail_status }} <a class="btn small primary" href="/auth/gmail">Reconnect Gmail</a></p>
+{% endif %}
+{% for t in urgent_trials %}
+<p class="alert {{ 'bad' if t.left <= 3 else '' }}"><strong>{{ t.label }}</strong> ends {{ t.end }}
+  ({% if t.left < 0 %}ended {{ -t.left }} days ago{% else %}{{ t.left }} day{{ 's' if t.left != 1 }} left{% endif %}): {{ t.what }}. <a href="/setup#trials">Details</a></p>
+{% endfor %}
+{% if setup_left %}
+<section class="card accent">
+  <h2>Finish setting up <span class="muted small">{{ steps|length - setup_left }} of {{ steps|length }} done</span></h2>
+  <ul class="checklist">
+    {% for s in steps %}<li class="{{ 'done' if s.done else '' }}"><span class="sr-only">{{ 'Done:' if s.done else 'To do:' }} </span><a href="{{ s.url }}">{{ s.title }}</a></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div class="grid two">
+  <section class="card">
+    <h2>Due now</h2>
+    {% if not (due.next_steps or due.interviews or due.followups or reminders or outreach_due) %}<p class="muted">Nothing is due. A good day to apply.</p>{% endif %}
+    {% if due.interviews %}<h3>Interviews this week</h3><ul class="list">
+      {% for e in due.interviews %}<li><a href="/roles/{{ e.role_id }}">{{ e.company }}</a> <span class="pill">{{ e.on_date }}</span> {{ e.text }}</li>{% endfor %}</ul>{% endif %}
+    {% if due.next_steps %}<h3>Next steps</h3><ul class="list">
+      {% for r in due.next_steps %}<li><a href="/roles/{{ r.id }}">{{ r.company }}</a>: {{ r.next_step }} <span class="pill {{ 'bad' if r.next_step_date < today_iso|default('') else '' }}">{{ r.next_step_date }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if due.followups %}<h3>Follow-ups owed</h3><ul class="list">
+      {% for r in due.followups %}<li><a href="/roles/{{ r.id }}">{{ r.company }}</a> {{ r.title }} <span class="muted small">applied {{ r.applied_on }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if outreach_due %}<h3>People to follow up with</h3><ul class="list">
+      {% for c in outreach_due %}<li><a href="{{ '/roles/' ~ c.role_id ~ '#people' if c.role_id else '/outreach' }}">{{ c.name }}</a> {{ c.company }} <span class="muted small">last contacted {{ c.last_contacted }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if reminders %}<h3>Reminders</h3><ul class="list">
+      {% for r in reminders %}<li>{{ r.text }} <span class="pill">{{ r.due|when }}</span></li>{% endfor %}</ul>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Ready to apply</h2>
+    {% if not ready %}<p class="muted">No roles are ready. <a href="/roles/new">Add one</a> or <a href="/intake">check your inbox</a>.</p>{% endif %}
+    <ul class="list">{% for r in ready %}
+      <li><a href="/roles/{{ r.id }}">{{ r.title }}</a> · {{ r.company }} <span class="grade g{{ r.grade }}">{{ r.grade }} {{ r.fit_score }}</span></li>{% endfor %}</ul>
+    {% if call %}<h3>Your call</h3><ul class="list">{% for r in call %}
+      <li><a href="/roles/{{ r.id }}">{{ r.title }}</a> · {{ r.company }} <span class="muted small">{{ r.lane_why }}</span></li>{% endfor %}</ul>{% endif %}
+  </section>
+</div>
+
+<div class="grid two">
+  {% if pipeline %}
+  <section class="card">
+    <h2>In progress</h2>
+    <ul class="list">{% for r in pipeline %}
+      <li><a href="/roles/{{ r.id }}">{{ r.company }}</a> {{ r.title }} <span class="pill {{ r.status }}">{{ r.status }}</span></li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+  {% if review or questions or pending_suggestions %}
+  <section class="card">
+    <h2>Needs a look</h2>
+    {% if pending_suggestions %}<p><a href="/suggestions">{{ pending_suggestions }} profile suggestion{{ 's' if pending_suggestions > 1 }}</a> waiting for approval.</p>{% endif %}
+    {% if review %}<h3>Emails to review</h3><ul class="list">{% for i in review %}<li><a href="/intake">{{ i.subject }}</a> <span class="muted small">{{ i.outcome }}</span></li>{% endfor %}</ul>{% endif %}
+    {% if questions %}<h3>Questions for you</h3><ul class="list">{% for q in questions %}<li><a href="/interview">{{ q.question }}</a></li>{% endfor %}</ul>{% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Setup</h1>
+<p class="muted">Work through these once. Each one says exactly what to click.</p>
+
+<ul class="checklist big">
+  {% for s in steps %}<li class="{{ 'done' if s.done else '' }}"><span class="sr-only">{{ 'Done:' if s.done else 'To do:' }} </span><a href="{{ s.url }}">{{ s.title }}</a></li>{% endfor %}
+</ul>
+
+<section class="card" id="claude">
+  <h2>1. Connect Claude</h2>
+  <p>Claude does the reading, scoring and writing. Use either:</p>
+  <ul>
+    <li><strong>Your own Claude Pro or Max plan</strong> (Pro is $20 a month). Your plan is signed in once on the server, through Claude's own sign-in screen; whoever runs your server does this with you (see the end of this page). Job Search HQ never sees your Claude password or token. Then choose it in <a href="/settings#claude">Settings</a>.</li>
+    <li><strong>An Anthropic API key</strong> (pay per use). Create one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com → API keys</a>, add a few dollars of credit, and paste it in <a href="/settings#claude">Settings</a>. Settings has a monthly cap.</li>
+  </ul>
+</section>
+
+<section class="card" id="gmail">
+  <h2>2. Connect Gmail (read only)</h2>
+  {% if gmail_note %}<p class="alert">{{ gmail_note }}</p>{% endif %}
+  {% if gmail_status %}<p class="alert bad">{{ gmail_status }}</p>{% endif %}
+  <p>Job Search HQ reads job alert emails and messages from employers to keep your roles up to date. It can't send, delete or label anything.
+     Google will warn that the app isn't verified: that's expected for a private copy. Choose <em>Continue</em> (or <em>Advanced</em>, then <em>Go to …</em>), then tick the box to allow reading email. If Google says <em>Access blocked</em> instead, ask whoever runs your server to add your Google account (see the end of this page). Google disconnects private apps like this about once a week; you'll get a notification and a <em>Reconnect Gmail</em> button on Today.</p>
+  {% if ctx.settings.has("gmail_refresh_token") %}
+    <p class="good">Connected.{% if gmail_last %} Last checked {{ gmail_last|when }}.{% endif %}</p>
+    <button class="btn" hx-post="/setup/gmail/disconnect" hx-confirm="Disconnect Gmail? Inbox updates will stop.">Disconnect Gmail</button>
+  {% else %}
+    <a class="btn primary" href="/auth/gmail">Connect Gmail</a>
+  {% endif %}
+</section>
+
+<section class="card" id="alerts">
+  <h2>3. Set up job alerts</h2>
+  <p>Job sites email you new postings; Job Search HQ reads those emails and adds the roles for you. No scraping.</p>
+  <h3>LinkedIn</h3>
+  <ol>
+    <li>On LinkedIn, search Jobs for a title you want (for example "Medical Assistant", "Store Manager" or "Data Analyst") and set filters: location, remote, date posted.</li>
+    <li>Turn on <strong>Set alert</strong> at the top of the results. Choose <strong>Daily</strong> and <strong>Email</strong>.</li>
+    <li>Repeat for each title. Manage them later under Jobs → Job alerts.</li>
+  </ol>
+  <h3>Indeed</h3>
+  <ol>
+    <li>Search on Indeed with your title and location, then choose <strong>Get new jobs for this search by email</strong>.</li>
+  </ol>
+  <p class="small muted">Alerts go to the Gmail address you connected. If your LinkedIn uses another address, add a Gmail filter to forward alerts.</p>
+  {% if not ctx.settings.get("alerts_done") %}<button class="btn" hx-post="/setup/alerts-done">I've set up alerts</button>{% else %}<p class="good">Done.</p>{% endif %}
+</section>
+
+<section class="card" id="push">
+  <h2>4. Notifications on this device</h2>
+  <p>Get reminders, interview days and inbox news as notifications. Do this on each device you use.
+     On an iPhone or iPad, first tap Share → <em>Add to Home Screen</em>, then open Job Search HQ from the home screen.
+     On a Chromebook or computer, Chrome's address bar has an <em>Install</em> icon that makes it an app.</p>
+  <div class="row">
+    <button class="btn primary" data-push="on" data-key="{{ vapid }}">Turn on notifications</button>
+    <button class="btn" hx-post="/push/test" data-push-test>Send a test</button>
+    <button class="btn" data-push="off">Turn off on this device</button>
+  </div>
+  <p class="small muted" data-push-state role="status"></p>
+  <p class="small muted">Blocked by mistake, or using another device? <a href="https://github.com/grantkovich/job-search-hq/blob/HEAD/docs/devices.md#part-2-using-job-search-hq-on-each-device" target="_blank" rel="noopener noreferrer">Device-by-device steps</a>.</p>
+</section>
+
+<section class="card">
+  <h2>5. Watch company job boards</h2>
+  <p>Many companies post jobs on Greenhouse, Lever or Ashby, which publish open job lists. Add the companies you want on the <a href="/intake#watch">Inbox page</a>, and new matching roles appear each morning.</p>
+</section>
+
+<section class="card" id="trials">
+  <h2>6. Free trials</h2>
+  <p>If you're using free trials, enter when each started. You'll get reminders before any of them bills, with what to do.</p>
+  {% for t in trials %}
+  <form hx-post="/setup/trials" class="form grid three trial">
+    <input type="hidden" name="name" value="{{ t.name }}">
+    <label>{{ t.label }} started<input type="date" name="start" value="{{ t.start }}"></label>
+    <label>Trial length (days)<input type="number" name="days" min="1" max="400" value="{{ t.days }}"></label>
+    <div class="row"><button class="btn">Save</button>
+      {% if t.end %}<span class="small {{ 'bad' if t.left is not none and t.left <= 7 else '' }}">Ends {{ t.end }}{% if t.left is not none %} ({{ t.left }} days left){% endif %}</span>{% endif %}</div>
+  </form>
+  <p class="small muted">When it ends: {{ t.what }}. <a href="{{ t.link }}" target="_blank" rel="noopener noreferrer">Manage it</a>.</p>
+  {% endfor %}
+  <p class="small muted">Trial lengths and terms vary by offer and change over time; check each provider's page.</p>
+</section>
+
+<section class="card" id="admin">
+  <details class="admin"><summary>For whoever runs your server</summary>
+    <p class="small">You don't need this part to use Job Search HQ; it's for the person who set up the server.</p>
+    <h3>Claude plan sign-in</h3>
+    <p class="small">In Cloud Shell, connect to the server and run <code>sudo jobsctl claude-login {{ ctx.config.instance_name }}</code>. Claude Code shows a link: the job seeker opens it, signs in to their own Claude account, and pastes the code back.</p>
+    <h3>Gmail</h3>
+    <p class="small">Google names the unverified app after the server's address (for example one ending in sslip.io). If the job seeker sees <em>Access blocked</em>, add their Google account as a test user (install guide, step 4, Part 3).</p>
+    <h3>Google sign-in redirect</h3>
+    <p class="small">Google sign-in for this copy uses this redirect address. It must be listed in the Google Cloud console under the OAuth client's <em>Authorized redirect URIs</em>:</p>
+    <p><code class="copy">{{ redirect_uri }}</code></p>
+    <h3>After the free trial</h3>
+    <p class="small">Moving to the free server (move-to-free.sh) is explained in docs/cheap.md.</p>
+  </details>
+</section>
+{% endblock %}

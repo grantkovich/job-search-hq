@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Interview practice</h1>
+<section class="card">
+  <h2>New question</h2>
+  <form hx-post="/practice/question" class="form grid two" hx-indicator="#qwait">
+    <label>For a role
+      <select name="role_id"><option value="">General behavioral</option>
+        {% for r in roles %}<option value="{{ r.id }}" {{ 'selected' if request.query_params.get('role') == r.id|string }}>{{ r.company }} · {{ r.title }}</option>{% endfor %}</select></label>
+    <label>Or type your own question<input name="question" placeholder="Leave blank and the AI picks one"></label>
+    <div class="span2 row"><button class="btn primary">Give me a question</button> <span role="status"><span id="qwait" class="htmx-indicator small">Writing a question…</span></span></div>
+  </form>
+</section>
+<section class="card">
+  <h2>History</h2>
+  <div class="table-wrap"><table class="table small cards">
+    <thead><tr><th>When</th><th>Question</th><th>Role</th><th>Score</th><th>Delivery</th></tr></thead>
+    <tbody>{% for h in history %}
+      <tr><td data-label="When">{{ h.at|when }}</td><td data-label="Question">{{ h.question[:90] }}</td><td data-label="Role">{{ h.company or 'General' }}</td>
+        <td data-label="Score">{% if h.total %}<strong>{{ h.total }}</strong>/20{% else %}<span class="muted">{{ h.status }}</span>{% endif %}</td>
+        <td data-label="Delivery">{% if h.seconds %}{{ h.seconds|round|int }}s{% endif %}{% if h.wpm %} · {{ h.wpm|round|int }} wpm{% endif %}{% if h.fillers %} · {{ h.fillers }} fillers{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">No practice yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

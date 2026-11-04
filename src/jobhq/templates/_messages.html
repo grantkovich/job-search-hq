@@ -1,0 +1,19 @@
+{% for m in messages %}
+<div class="msg {{ m.role }} {{ m.status }}" id="m{{ m.id }}"
+     {% if m.status == 'pending' %}hx-get="/chat/msg/{{ m.id }}" hx-trigger="load delay:1500ms" hx-swap="outerHTML"{% endif %}>
+  <span class="sr-only">{{ 'You:' if m.role == 'user' else 'Assistant:' }}</span>
+  {% if m.status == 'pending' %}
+    <p class="thinking"><span class="spinner" aria-hidden="true"></span> Thinking…</p>
+  {% elif m.role == 'assistant' %}
+    <div class="md">{{ m.content|md }}</div>
+    {% if m.meta.actions %}
+    <ul class="actions">{% for a in m.meta.actions %}
+      <li>{{ a.summary }}{% if a.audit_id %} <button class="link small" hx-post="/undo/{{ a.audit_id }}" hx-swap="outerHTML">Undo<span class="sr-only">: {{ a.summary }}</span></button>{% endif %}
+        {% if a.reminder_id %} <button class="link small" hx-post="/reminders/{{ a.reminder_id }}/cancel" hx-swap="none">Cancel reminder<span class="sr-only">: {{ a.summary }}</span></button>{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if m.meta.proposals %}<p class="small"><a href="/suggestions">{{ m.meta.proposals|length }} suggestion{{ 's' if m.meta.proposals|length > 1 }} waiting for approval</a></p>{% endif %}
+  {% else %}
+    <p class="plain">{{ m.content }}</p>
+  {% endif %}
+</div>
+{% endfor %}

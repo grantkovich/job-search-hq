@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Documents</h1>
+<p class="muted">Make a tailored resume or cover letter from any role's page. Every draft is checked against your profile before you approve it.</p>
+<div class="table-wrap"><table class="table cards">
+  <thead><tr><th>Document</th><th>Role</th><th>Status</th><th>Checks</th><th>Updated</th></tr></thead>
+  <tbody>{% for d in docs %}
+    <tr><td data-label="Document"><a href="/documents/{{ d.id }}">{{ 'Resume' if d.kind == 'resume' else 'Cover letter' }}<span class="sr-only">, {{ d.title }} at {{ d.company }}</span></a></td>
+      <td data-label="Role"><a href="/roles/{{ d.role_id }}">{{ d.title }} · {{ d.company }}</a></td>
+      <td data-label="Status"><span class="pill {{ d.status }}">{{ d.status }}</span></td>
+      <td data-label="Checks">{% if d.failed %}<span class="bad">{{ d.failed }} to fix</span>{% else %}<span class="good">all passed</span>{% endif %}</td>
+      <td data-label="Updated" class="small">{{ d.updated|when }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">None yet. Open a role and choose Tailor resume.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}

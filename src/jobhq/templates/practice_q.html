@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="small"><a href="/practice">← Practice</a></p>
+<h1 class="question">{{ q.question }}</h1>
+<p class="muted">{% if q.company %}{{ q.title }} · {{ q.company }}{% else %}General{% endif %}{% if q.focus %} · {{ q.focus }}{% endif %}</p>
+
+<section class="card" id="answer">
+  <h2>Answer</h2>
+  {% if voice_enabled %}
+  <div class="recorder row" data-recorder data-upload="/practice/q/{{ q.id }}/voice">
+    <button class="btn primary" data-rec-start><span aria-hidden="true">●</span> Record answer</button>
+    <button class="btn" data-rec-stop disabled>Stop and grade</button>
+    <span class="small" data-rec-status>Aim for one to two minutes (five at most). The audio is deleted right after it's transcribed.</span>
+    <span class="sr-only" role="status" data-rec-live></span>
+  </div>
+  <p class="small muted">Or type it:</p>
+  {% endif %}
+  <form hx-post="/practice/q/{{ q.id }}/answer" class="form" data-timer>
+    <label for="answer-text">Your answer</label>
+    <textarea id="answer-text" name="answer" rows="8" aria-describedby="answer-hint" required></textarea>
+    <p class="hint" id="answer-hint">Say the situation, what you did, the result, and why it matters for this role.</p>
+    <input type="hidden" name="seconds" value="">
+    <div class="row"><button class="btn primary">Grade my answer</button></div>
+  </form>
+</section>
+
+{% for a in attempts %}
+{# Only the try being graded is re-fetched, so a half-typed answer above is never touched. #}
+<section class="card attempt" id="attempt-{{ a.id }}" aria-live="polite">
+  <div id="attempt-body-{{ a.id }}" {% if a.status == 'grading' %}hx-get="/practice/q/{{ q.id }}" hx-trigger="load delay:3s" hx-select="#attempt-body-{{ a.id }}" hx-target="this" hx-swap="outerHTML"{% endif %}>
+  <h2>Try {{ attempts|length - loop.index0 }} {% if a.total %}<span class="score-inline">{{ a.total }}/20</span>{% endif %}
+    <span class="muted small">{{ a.at|when }} · {{ a.via }}{% if a.seconds %} · {{ a.seconds|round|int }}s{% endif %}{% if a.wpm %} · {{ a.wpm|round|int }} wpm{% endif %} · {{ a.fillers }} fillers</span></h2>
+  {% if a.status == 'grading' %}<p><span class="spinner" aria-hidden="true"></span> Grading…</p>
+  {% elif a.status == 'failed' %}<p class="bad">Grading failed: {{ a.grade_d.error }}</p>
+  {% else %}
+    <div class="bars">{% for k in ["structure", "evidence", "fit", "length"] %}<div class="bar"><span id="g{{ a.id }}-{{ k }}">{{ k.title() }}</span><meter min="0" max="5" value="{{ a.grade_d[k] }}" aria-labelledby="g{{ a.id }}-{{ k }}"></meter><span>{{ a.grade_d[k] }}/5</span></div>{% endfor %}</div>
+    <p><strong>What worked:</strong> {{ a.grade_d.worked }}</p>
+    <p><strong>Fix next time:</strong> {{ a.grade_d.fix }}</p>
+    <p><strong>Likely follow-up:</strong> {{ a.grade_d.follow_up }}</p>
+  {% endif %}
+  <details><summary class="small">Your answer</summary><p class="plain small">{{ a.answer }}</p></details>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}
