@@ -19,7 +19,7 @@ dependencies = [
     "claude-agent-sdk==0.2.177",
     "markdown-it-py==4.2.0",
     "typst==0.15.0",
-    "pypdf==6.21.4",
+    "pypdf==7.0.0",
     "pywebpush==2.5.0",
 ]
 
