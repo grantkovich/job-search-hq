@@ -18,7 +18,7 @@ dependencies = [
     "cryptography==50.0.2",
     "claude-agent-sdk==0.2.177",
     "markdown-it-py==4.2.0",
-    "typst==0.15.0",
+    "typst==0.15.2",
     "pypdf==6.21.4",
     "pywebpush==2.5.0",
 ]
