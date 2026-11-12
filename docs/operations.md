@@ -32,6 +32,7 @@ You can pin an exact build with `ghcr.io/grantkovich/job-search-hq@sha256:<diges
 ## Backups
 
 - **Nightly:** a backup runs at 2:30 AM (`jobhq-backup.timer`) and keeps 14 per person in `/srv/jobhq/backups`. Each archive holds a consistent copy of the database, the person's PDFs and their settings file.
+- **Hear when backups stop (optional):** after each good backup the VM pings the URL in `/etc/jobhq/checkin-url`, if that file exists. Use any dead-man's-switch service (for example healthchecks.io): `echo 'https://…' | sudo tee /etc/jobhq/checkin-url >/dev/null && sudo chmod 600 /etc/jobhq/checkin-url`. Servers set up before this option existed get it by re-running `scripts/bootstrap-vm.sh`.
 - **Now:** `sudo jobsctl backup NAME` or `sudo jobsctl backup --all`.
 - **Off the server:** copy backups to a Cloud Storage bucket from Cloud Shell, not from the VM, because the VM has no Google Cloud access on purpose:
   ```

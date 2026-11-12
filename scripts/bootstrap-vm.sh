@@ -105,6 +105,9 @@ After=docker.service
 Type=oneshot
 UMask=0077
 ExecStart=/usr/local/bin/jobsctl backup --all --quiet
+# Optional: after a good backup, ping a check-in URL (a dead-man's switch such as healthchecks.io)
+# so you hear when backups stop. Put the URL in /etc/jobhq/checkin-url (root-only) to turn it on.
+ExecStartPost=-/bin/sh -c 'f=/etc/jobhq/checkin-url; [ -s "$f" ] && curl -fsS -m 10 -X POST "$(cat "$f")" >/dev/null'
 UNIT
 cat > /etc/systemd/system/jobhq-backup.timer <<'UNIT'
 [Unit]
