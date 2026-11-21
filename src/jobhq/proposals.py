@@ -4,6 +4,7 @@ The AI can't change the profile directly. It files a proposal; the user sees exa
 what would change and approves or rejects it. Approving applies it in one transaction
 and logs it in the audit trail.
 """
+
 from __future__ import annotations
 
 import time
@@ -13,8 +14,22 @@ from .profile import Profile, clean_basics
 from .store import Audit
 
 KINDS = ("profile_fact", "skill", "profile_field")
-PROFILE_FIELDS = ("headline", "summary", "level", "target_titles", "target_sectors", "avoid", "work_modes", "pay_floor",
-                  "pay_target", "max_commute_miles", "city", "region", "country", "work_authorization")
+PROFILE_FIELDS = (
+    "headline",
+    "summary",
+    "level",
+    "target_titles",
+    "target_sectors",
+    "avoid",
+    "work_modes",
+    "pay_floor",
+    "pay_target",
+    "max_commute_miles",
+    "city",
+    "region",
+    "country",
+    "work_authorization",
+)
 
 
 class ProposalError(ValueError):
@@ -32,8 +47,10 @@ class Proposals:
         dup = self.db.one("SELECT id FROM proposals WHERE status = 'pending' AND kind = ? AND payload = ?", (kind, dumps(payload)))
         if dup:
             return dup["id"]
-        return self.db.run("INSERT INTO proposals (at, kind, title, payload, source) VALUES (?, ?, ?, ?, ?)",
-                           (time.time(), kind, title[:200], dumps(payload), source[:100])).lastrowid
+        return self.db.run(
+            "INSERT INTO proposals (at, kind, title, payload, source) VALUES (?, ?, ?, ?, ?)",
+            (time.time(), kind, title[:200], dumps(payload), source[:100]),
+        ).lastrowid
 
     def _validate(self, kind: str, p: dict) -> None:
         if kind == "profile_fact":
