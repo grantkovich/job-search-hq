@@ -46,5 +46,5 @@ jobs:
       - name: Scan the image
         # Pinned by commit: 76 of this action's version tags were hijacked in March 2026 (CVE-2026-33634).
         # v0.35.0 was not affected, per its maintainers' release notes.
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: {image-ref: "jobhq:scan", severity: "CRITICAL,HIGH", ignore-unfixed: true, exit-code: "1"}
