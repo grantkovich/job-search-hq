@@ -64,9 +64,8 @@ class Proposals:
         elif kind == "skill":
             if not str(p.get("name", "")).strip() or p.get("status") not in ("have", "never"):
                 raise ProposalError("a skill needs a name and status 'have' or 'never'")
-        elif kind == "profile_field":
-            if p.get("field") not in PROFILE_FIELDS:
-                raise ProposalError(f"field must be one of: {', '.join(PROFILE_FIELDS)}")
+        elif kind == "profile_field" and p.get("field") not in PROFILE_FIELDS:
+            raise ProposalError(f"field must be one of: {', '.join(PROFILE_FIELDS)}")
 
     def pending(self) -> list[dict]:
         rows = self.db.all("SELECT * FROM proposals WHERE status = 'pending' ORDER BY id")
