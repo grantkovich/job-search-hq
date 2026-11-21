@@ -5,13 +5,13 @@
 # - Runs as an unprivileged user; compose.yaml adds a read-only root filesystem,
 #   no capabilities and no-new-privileges.
 # - Pin the base image by digest in production: Dependabot keeps it current (.github/dependabot.yml).
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.15-slim-bookworm AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 COPY requirements.lock ./
 RUN python -m venv /venv && /venv/bin/pip install --require-hashes --no-deps -r requirements.lock
 
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 ARG VOICE=1
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates tini $( [ "$VOICE" = "1" ] && echo ffmpeg ) \
