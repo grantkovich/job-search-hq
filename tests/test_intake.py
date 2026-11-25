@@ -1,4 +1,6 @@
 import asyncio
+import re
+from html import unescape
 
 import pytest
 
@@ -177,6 +179,33 @@ def test_watch_add_from_link(client, ctx):
     client.post("/intake/watch", data={"name": "Acme", "slug": "https://boards.greenhouse.io/acme/jobs/123", "keywords": "ops"})
     row = ctx.db.one("SELECT * FROM watch_companies")
     assert (row["board"], row["slug"]) == ("greenhouse", "acme")
+
+
+def watch_button(client, ctx, name):
+    ctx.db.run("INSERT INTO watch_companies (name, board, slug, keywords) VALUES (?, 'lever', 'acme', 'ops')", (name,))
+    wid = ctx.db.value("SELECT id FROM watch_companies")
+    html = client.get("/intake").text
+    match = re.search(r'<button[^>]*hx-post="/intake/watch/%d/delete"[^>]*>' % wid, html)
+    assert match, "remove button not found"
+    return wid, match.group(0), html
+
+
+def test_watch_remove_asks_first(client, ctx):
+    _, button, _ = watch_button(client, ctx, "Acme")
+    assert 'hx-confirm="Stop watching Acme?"' in button
+
+
+def test_watch_remove_confirm_escapes_the_name(client, ctx):
+    _, button, html = watch_button(client, ctx, 'Acme "<b>" & Co')
+    confirm = re.search(r'hx-confirm="([^"]*)"', button).group(1)
+    assert "&lt;b&gt;" in confirm and "<b>" not in html
+    assert unescape(confirm) == 'Stop watching Acme "<b>" & Co?'
+
+
+def test_watch_delete_endpoint_removes_the_company(client, ctx):
+    wid, _, _ = watch_button(client, ctx, "Acme")
+    client.post(f"/intake/watch/{wid}/delete")
+    assert ctx.db.value("SELECT COUNT(*) FROM watch_companies") == 0
 
 
 @pytest.mark.parametrize("url", ["http://example.com/job", "https://127.0.0.1/x", "https://169.254.169.254/computeMetadata/v1/",
