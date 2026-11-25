@@ -24,7 +24,7 @@
   <p class="small">Paste a company's careers link from Greenhouse (boards.greenhouse.io/…), Lever (jobs.lever.co/…) or Ashby (jobs.ashbyhq.com/…). New roles whose titles match your keywords are added and scored each morning.</p>
   <ul class="list">{% for w in watch %}<li><strong>{{ w.name }}</strong> <span class="pill">{{ w.board }}/{{ w.slug }}</span>
     {% if w.keywords %}<span class="small">titles with: {{ w.keywords }}</span>{% endif %}
-    <button class="link small" hx-post="/intake/watch/{{ w.id }}/delete">remove<span class="sr-only"> {{ w.name }}</span></button></li>{% endfor %}</ul>
+    <button class="link small" hx-post="/intake/watch/{{ w.id }}/delete" hx-confirm="Stop watching {{ w.name }}?">remove<span class="sr-only"> {{ w.name }}</span></button></li>{% endfor %}</ul>
   <form hx-post="/intake/watch" class="form grid three">
     <label>Company name<input name="name" required></label>
     <label>Careers link<input name="slug" placeholder="https://jobs.lever.co/acme" required></label>
