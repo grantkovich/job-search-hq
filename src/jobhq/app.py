@@ -16,6 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import config as config_mod
 from . import documents
 from .ai import tasks
+from .auth import cookie_name
 from .context import Ctx, build
 from .intake import Gmail, check_boards, check_inbox
 from .security import GuardMiddleware
@@ -153,9 +154,11 @@ def create_app(ctx: Ctx | None = None, run_worker: bool = True) -> FastAPI:
 
     @app.exception_handler(common.SignedOut)
     async def signed_out(request: Request, _exc):
+        # A cookie the server no longer accepts means the session ended; no cookie means a first visit.
+        target = "/login?error=signed_out" if request.cookies.get(cookie_name(ctx.config)) else "/login"
         if common.is_htmx(request):
-            return Response(status_code=401, headers={"HX-Redirect": "/login"})
-        return Response(status_code=303, headers={"Location": "/login"})
+            return Response(status_code=401, headers={"HX-Redirect": target})
+        return Response(status_code=303, headers={"Location": target})
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
