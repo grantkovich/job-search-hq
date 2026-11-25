@@ -213,6 +213,19 @@ class Roles:
             label = summary or f"Updated {row['title']} at {row['company']}: " + ", ".join(changed)
             return self.audit.log(conn, actor, "update", "role", role_id, {k: before[k] for k in changed}, changed, label)
 
+    def delete(self, role_id: int, actor: str = "user") -> tuple[int, list[str]]:
+        """Remove a role. Its timeline and documents go with it (foreign keys); contacts, reminders and inbox items
+        keep their rows with the role link cleared. Returns the audit id and the PDF names the caller should remove."""
+        with self.db.tx() as conn:
+            row = conn.execute("SELECT * FROM roles WHERE id = ?", (role_id,)).fetchone()
+            if not row:
+                raise RoleError("That role doesn't exist.")
+            files = [d["pdf_file"] for d in conn.execute("SELECT pdf_file FROM documents WHERE role_id = ?", (role_id,)) if d["pdf_file"]]
+            conn.execute("DELETE FROM roles WHERE id = ?", (role_id,))
+            before = {k: row[k] for k in ("company", "title", "status")}
+            audit_id = self.audit.log(conn, actor, "delete", "role", role_id, before, None, f"Deleted {row['title']} at {row['company']}")
+        return audit_id, files
+
     def add_event(self, role_id: int, kind: str, on_date: str, text: str, actor: str = "user") -> int:
         if kind not in EVENT_KINDS:
             raise RoleError(f"kind must be one of: {', '.join(EVENT_KINDS)}")

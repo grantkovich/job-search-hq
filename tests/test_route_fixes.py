@@ -250,3 +250,34 @@ def test_add_role_too_long_posting_is_a_clear_error(c, ctx):
     r = c.post("/roles", data={"company": "Acme", "title": "Ops", "posting": "x" * 60_001})
     assert r.status_code == 400 and "60,000" in err(r)
     assert ctx.roles.all() == []
+
+
+# ------------------------------------------------------------------ deleting a role
+def test_role_delete_removes_role(c, ctx):
+    for headers, check in (({"HX-Request": ""}, lambda r: r.status_code == 303 and r.headers["location"] == "/roles"),
+                           ({}, lambda r: r.status_code == 204 and r.headers["hx-redirect"] == "/roles")):
+        rid = ctx.roles.create({"company": "Gone Co", "title": "Wrong Role"})
+        r = c.post(f"/roles/{rid}/delete", headers=headers)
+        assert check(r)
+        assert c.get(f"/roles/{rid}").status_code == 404
+        assert "Wrong Role" not in c.get("/roles").text
+
+
+def test_role_delete_cleans_up_children(c, ctx):
+    rid = ctx.roles.create({"company": "Acme", "title": "Ops"})
+    ctx.roles.add_event(rid, "note", "2026-11-03", "hello")
+    name = "doc-" + "a" * 24 + ".pdf"
+    (ctx.config.files_dir / name).write_bytes(b"%PDF")
+    ctx.db.run("INSERT INTO documents (role_id, kind, content, pdf_file, created, updated) VALUES (?, 'resume', '{}', ?, 1, 1)", (rid, name))
+    ctx.db.run("INSERT INTO reminders (role_id, text, due, created) VALUES (?, 'ping', 1, 1)", (rid,))
+    assert c.post(f"/roles/{rid}/delete").status_code == 204
+    assert not ctx.db.all("SELECT 1 FROM role_events WHERE role_id = ?", (rid,))
+    assert not ctx.db.all("SELECT 1 FROM documents WHERE role_id = ?", (rid,))
+    assert not (ctx.config.files_dir / name).exists()
+    assert ctx.db.one("SELECT role_id FROM reminders WHERE text = 'ping'")["role_id"] is None
+
+
+def test_role_delete_unknown_404(c, ctx):
+    ctx.roles.create({"company": "Acme", "title": "Ops"})
+    assert c.post("/roles/999999/delete").status_code == 404
+    assert len(ctx.roles.all()) == 1
