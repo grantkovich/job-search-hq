@@ -700,7 +700,7 @@ def role_delete(request: Request, role_id: int):
     return redirect(request, "/roles")
 
 
-@router.post("/roles/{role_id}/score",dependencies=signed_in)
+@router.post("/roles/{role_id}/score", dependencies=signed_in)
 def role_score(request: Request, role_id: int):
     ctx = ctx_of(request)
     role = ctx.roles.get(role_id)
