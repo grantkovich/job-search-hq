@@ -688,7 +688,19 @@ def role_event_delete(request: Request, role_id: int, event_id: int):
     return refresh(request, "Timeline entry deleted.")
 
 
-@router.post("/roles/{role_id}/score", dependencies=signed_in)
+@router.post("/roles/{role_id}/delete", dependencies=signed_in)
+def role_delete(request: Request, role_id: int):
+    ctx = ctx_of(request)
+    try:
+        _audit_id, files = ctx.roles.delete(role_id)
+    except RoleError:
+        raise not_found() from None
+    for name in files:
+        documents._remove(ctx, name)
+    return redirect(request, "/roles")
+
+
+@router.post("/roles/{role_id}/score",dependencies=signed_in)
 def role_score(request: Request, role_id: int):
     ctx = ctx_of(request)
     role = ctx.roles.get(role_id)

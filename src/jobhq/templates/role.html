@@ -45,6 +45,7 @@
     <button class="btn" hx-post="/roles/{{ r.id }}/score" hx-target="#work" hx-swap="innerHTML">{{ 'Re-score' if r.fit_score is not none else 'Score fit' }}</button>
     <button class="btn" hx-post="/roles/{{ r.id }}/documents/resume" hx-target="#work" hx-swap="innerHTML">Tailor resume</button>
     <button class="btn" hx-post="/roles/{{ r.id }}/documents/cover_letter" hx-target="#work" hx-swap="innerHTML">Write cover letter</button>
+    <button class="btn" hx-post="/roles/{{ r.id }}/delete" hx-confirm="Delete {{ r.title }} at {{ r.company }}? Its timeline and documents go too.">Delete role</button>
     <a class="btn" href="/practice?role={{ r.id }}">Practice interview</a>
   </div>
   <p id="work" class="small" role="status"></p>

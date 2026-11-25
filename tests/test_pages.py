@@ -106,3 +106,10 @@ def test_export_includes_certifications_and_projects(client, ctx):
     z = zipfile.ZipFile(io.BytesIO(client.get("/export").content))
     assert "CPR/AED" in z.read("certifications.csv").decode("utf-8-sig")
     assert "Food pantry inventory" in z.read("projects.csv").decode("utf-8-sig")
+
+
+def test_role_page_has_delete_button(client, ctx):
+    rid = ctx.roles.create({"company": "Acme", "title": "Ops"})
+    html = client.get(f"/roles/{rid}").text
+    button = html.split(f'hx-post="/roles/{rid}/delete"')[1].split(">")[0]
+    assert "hx-confirm=" in button and "Ops" in button

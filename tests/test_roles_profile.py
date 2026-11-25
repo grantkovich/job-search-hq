@@ -150,3 +150,13 @@ def test_reject_changes_nothing(ctx):
     pid = ctx.proposals.file("skill", "t", {"name": "SQL", "status": "have"})
     ctx.proposals.decide(pid, False)
     assert ctx.profile.skills() == []
+
+
+def test_role_delete_is_audited(ctx):
+    rid = ctx.roles.create({"company": "Initech", "title": "Ops"})
+    audit_id, _files = ctx.roles.delete(rid)
+    row = ctx.db.one("SELECT * FROM audit WHERE id = ?", (audit_id,))
+    assert (row["entity"], row["action"]) == ("role", "delete") and "Initech" in row["summary"]
+    assert ctx.roles.get(rid) is None
+    with pytest.raises(RoleError):
+        ctx.roles.undo(audit_id)
