@@ -185,7 +185,7 @@ def watch_button(client, ctx, name):
     ctx.db.run("INSERT INTO watch_companies (name, board, slug, keywords) VALUES (?, 'lever', 'acme', 'ops')", (name,))
     wid = ctx.db.value("SELECT id FROM watch_companies")
     html = client.get("/intake").text
-    match = re.search(r'<button[^>]*hx-post="/intake/watch/%d/delete"[^>]*>' % wid, html)
+    match = re.search(rf'<button[^>]*hx-post="/intake/watch/{wid}/delete"[^>]*>', html)
     assert match, "remove button not found"
     return wid, match.group(0), html
 
