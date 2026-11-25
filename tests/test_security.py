@@ -1,5 +1,6 @@
 import pytest
 
+from jobhq.auth import cookie_name
 from jobhq.security import RateLimiter
 
 
@@ -51,6 +52,38 @@ def test_signed_out_pages_redirect_to_login(anon):
     assert response.status_code == 303 and response.headers["location"] == "/login"
     response = anon.get("/roles", headers={"HX-Request": "true"})
     assert response.status_code == 401 and response.headers["hx-redirect"] == "/login"
+
+
+@pytest.fixture
+def ended(anon, ctx):
+    """A browser that still sends a session cookie the server no longer accepts."""
+    token, session = ctx.sessions.create("pytest", "127.0.0.1")
+    anon.cookies.set(cookie_name(ctx.config), token, domain="me.example.test")
+    ctx.sessions.end(token)
+    return anon, session
+
+
+def test_ended_session_redirects_with_reason(ended):
+    anon, _ = ended
+    response = anon.get("/roles")
+    assert response.status_code == 303 and response.headers["location"] == "/login?error=signed_out"
+    response = anon.get("/roles", headers={"HX-Request": "true"})
+    assert response.status_code == 401 and response.headers["hx-redirect"] == "/login?error=signed_out"
+
+
+def test_ended_session_login_page_explains(ended):
+    anon, _ = ended
+    anon.cookies.clear()
+    response = anon.get("/login?error=signed_out")
+    assert response.status_code == 200 and "Your session ended" in response.text
+
+
+def test_ended_session_save_keeps_page(ended):
+    anon, session = ended
+    response = anon.post("/profile/facts", data={"text": "x"}, headers={
+        "HX-Request": "true", "Origin": "https://me.example.test", "X-CSRF-Token": session.csrf})
+    assert response.status_code == 403 and response.headers["hx-reswap"] == "none"
+    assert "session ended" in response.json()["error"] and "hx-redirect" not in response.headers
 
 
 def test_unknown_host_header_rejected(app):
